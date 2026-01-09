@@ -13,17 +13,24 @@
 
 ---
 
-## 설치
+## 설치 (HACS)
 
-1. `/config/custom_components/seoul_bike/` 경로에 이 폴더 전체를 복사합니다.
-2. Home Assistant를 재시작합니다.
-3. **설정 → 기기 및 서비스 → 통합 추가 → “따릉이 (Seoul Public Bike)”**를 선택합니다.
+아래 버튼을 누르면, Home Assistant에서 HACS 커스텀 레포 추가 화면으로 이동합니다.
 
-설치 후 통합을 추가하는 과정에서 두 가지 수집 방식 중 하나를 선택하게 됩니다. 아래 설명을 참고하여 적합한 방식을 골라 주세요.
+[![Open your Home Assistant instance and show the HACS repository.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=1bobby-git&repository=HA-Seoul-Bike&category=integration)
+
+1. HACS → **Integrations** → 우측 상단 ⋮ → **Custom repositories**
+2. Repository: `https://github.com/1bobby-git/HA-Seoul-Bike`
+3. Category: **Integration**
+4. 설치 후 Home Assistant 재시작
 
 ---
 
 ## 설정(추가) 흐름
+
+통합 추가 화면으로 바로 이동하는 버튼입니다.
+
+[![Open your Home Assistant instance and start setting up the integration.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=seoul_bike)
 
 통합을 추가하면 **수집 방식**을 먼저 선택합니다.
 
