@@ -5,6 +5,7 @@ import re
 from datetime import timedelta, datetime
 from typing import Any
 from html import unescape
+from html.parser import HTMLParser
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -48,24 +49,54 @@ def _extract_div_by_class(html: str, class_name: str) -> str | None:
     return m.group(1) if m else None
 
 
+class _KcalBoxParser(HTMLParser):
+    """HTML parser to extract key-value pairs from the kcal_box div."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.in_kcal_div = False
+        self.current_key: str | None = None
+        self.data: dict[str, str] = {}
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str]]) -> None:
+        if tag == "div":
+            # Enter kcal_box div if class attribute contains "kcal_box"
+            for name, value in attrs:
+                if name == "class" and "kcal_box" in value:
+                    self.in_kcal_div = True
+                    return
+        elif self.in_kcal_div and tag == "p":
+            # Reset current key when encountering a new <p> tag
+            if self.current_key is not None:
+                # If we encounter two keys in a row without a value, ignore
+                self.current_key = None
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "div" and self.in_kcal_div:
+            self.in_kcal_div = False
+
+    def handle_data(self, data: str) -> None:
+        if not self.in_kcal_div:
+            return
+        text = data.strip()
+        if not text:
+            return
+        if self.current_key is None:
+            self.current_key = text
+        else:
+            # Save the key/value pair
+            self.data[self.current_key] = text
+            self.current_key = None
+
+
+
 def _extract_kcal_box(html: str) -> dict[str, str]:
-    block = _extract_div_by_class(html, "kcal_box")
-    if not block:
-        return {}
+    """Extract kcal_box key/value pairs using an HTML parser."""
+    parser = _KcalBoxParser()
+    parser.feed(html)
+    return parser.data
 
-    pairs = re.findall(
-        r'alt="([^"]+)"[^>]*>.*?<p>\s*([^<]+?)\s*</p>',
-        block,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-
-    out: dict[str, str] = {}
-    for k, v in pairs:
-        key = (k or "").strip()
-        val = (v or "").strip()
-        if key and val:
-            out[key] = val
-    return out
+   
 
 
 def _extract_payment_history(html: str) -> list[dict[str, Any]]:
