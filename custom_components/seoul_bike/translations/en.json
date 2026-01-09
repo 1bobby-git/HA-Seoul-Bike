@@ -1,0 +1,57 @@
+{
+  "title": "Ddareungi (Seoul Public Bike)",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Ddareungi setup",
+        "description": "Choose a collection method. (You can add multiple entries)",
+        "data": {
+          "mode": "Method"
+        }
+      },
+      "api": {
+        "title": "Ddareungi (API) setup",
+        "description": "Enter your Seoul Open Data Plaza OpenAPI key.",
+        "data": {
+          "api_key": "OpenAPI Key",
+          "location_entity": "My location entity (entity_id)",
+          "update_interval_seconds": "Update interval (seconds)",
+          "station_ids": "Station IDs (comma/newline). e.g. 3685, ST-2697"
+        }
+      },
+      "cookie": {
+        "title": "Ddareungi (Cookie) setup",
+        "description": "Paste your bikeseoul.com login cookie.",
+        "data": {
+          "cookie": "Cookie"
+        }
+      }
+    },
+    "error": {
+      "cookie_required": "Cookie is required.",
+      "cannot_connect": "Cannot connect.",
+      "invalid_auth": "Invalid authentication. Check the API key.",
+      "unknown": "Unknown error."
+    },
+    "abort": {
+      "already_configured": "Already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Options",
+        "description": "Change settings.",
+        "data": {
+          "station_ids": "Station IDs (comma/newline)",
+          "location_entity": "My location entity (entity_id)",
+          "update_interval_seconds": "Update interval (seconds)",
+          "cookie": "Cookie"
+        }
+      }
+    },
+    "error": {
+      "cookie_required": "Cookie is required."
+    }
+  }
+}
