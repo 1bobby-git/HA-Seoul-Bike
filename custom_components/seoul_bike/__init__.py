@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/__init__.py
+
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry

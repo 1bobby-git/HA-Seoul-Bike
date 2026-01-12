@@ -1,10 +1,31 @@
+# custom_components/seoul_bike/modes/cookie/api.py
+
 from __future__ import annotations
 
+import logging
+
 import aiohttp
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _normalize_cookie(raw: str) -> str:
     v = (raw or "").strip().strip('"').strip("'")
+    if v:
+        if "\n" in v or "\r" in v:
+            parts = [p.strip() for p in v.replace("\r", "\n").split("\n") if p.strip()]
+            cookie_line = None
+            for line in parts:
+                if line.lower().startswith("cookie:"):
+                    cookie_line = line
+                    break
+            if cookie_line is None:
+                for line in parts:
+                    if line.lower().startswith("cookie "):
+                        cookie_line = line
+                        break
+            v = cookie_line or " ".join(parts)
+        v = " ".join(v.replace("\r", " ").replace("\n", " ").split())
     low = v.lower()
     if low.startswith("cookie "):
         v = v[7:].strip()
@@ -47,8 +68,11 @@ class SeoulPublicBikeSiteApi:
     async def _get_text(self, path: str, params: dict | None = None, referer_path: str | None = None) -> str:
         url = f"{self.BASE}{path}"
         async with self._session.get(url, params=params, headers=self._headers(referer_path), allow_redirects=True) as resp:
-            resp.raise_for_status()
-            return await resp.text(errors="ignore")
+            text = await resp.text(errors="ignore")
+            _LOGGER.debug("Cookie fetch %s status=%s len=%s", path, resp.status, len(text))
+            if resp.status >= 400:
+                resp.raise_for_status()
+            return text
 
     async def fetch_use_history_html(self) -> str:
         return await self._get_text("/app/mybike/getMemberUseHistory.do", referer_path="/app/mybike/getMemberUseHistory.do")

@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/cookie/binary_sensor.py
+
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import BinarySensorEntity

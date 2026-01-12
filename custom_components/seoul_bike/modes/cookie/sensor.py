@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/cookie/sensor.py
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -27,17 +29,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities: list[SensorEntity] = [
         # kcal_box
-        KcalBoxTextSensor(coordinator, "이용시간", "이용시간"),
-        KcalBoxFloatSensor(coordinator, "거리(km)", "거리", unit="km"),
-        KcalBoxFloatSensor(coordinator, "칼로리(kcal)", "칼로리", unit="kcal"),
-        KcalBoxFloatSensor(coordinator, "탄소절감효과(kg)", "탄소절감효과", unit="kg"),
+        KcalBoxTextSensor(coordinator, "이용 시간", "이용시간"),
+        KcalBoxFloatSensor(coordinator, "거리 (km)", "거리", unit="km"),
+        KcalBoxFloatSensor(coordinator, "칼로리 (kcal)", "칼로리", unit="kcal"),
+        KcalBoxFloatSensor(coordinator, "탄소 절감 효과 (kg)", "탄소절감효과", unit="kg"),
 
         # 최근 이력
         LastFieldSensor(coordinator, "최근 자전거", "bike"),
         LastFieldSensor(coordinator, "최근 대여소", "rent_station"),
-        LastFieldSensor(coordinator, "최근 대여일시", "rent_datetime"),
+        LastFieldSensor(coordinator, "최근 대여 일시", "rent_datetime"),
         LastFieldSensor(coordinator, "최근 반납 대여소", "return_station"),
-        LastFieldSensor(coordinator, "최근 반납일시", "return_datetime"),
+        LastFieldSensor(coordinator, "최근 반납 일시", "return_datetime"),
 
         # 이용권 유효기간
         TicketExpirySensor(coordinator),
@@ -195,7 +197,7 @@ class LastFieldSensor(_BaseUseHistorySensor):
 
 
 class TicketExpirySensor(_BaseUseHistorySensor):
-    _attr_name = "이용권 유효기간"
+    _attr_name = "이용권 유효 기간"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
 
     def __init__(self, coordinator: SeoulPublicBikeCoordinator) -> None:

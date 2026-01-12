@@ -60,7 +60,7 @@ curl -m 25 -v "http://openapi.seoul.go.kr:8088/내키/json/bikeList/1/5/"
 
 **입력 항목**
 
-- **따릉이 로그인 쿠키** – 크롬/파이어폭스 개발자 도구에서 `bikeseoul.com` 도메인의 `JSESSIONID` 등을 복사하여 입력합니다.
+- **따릉이 로그인 쿠키** – 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청의 `Cookie` 값을 복사하여 입력합니다.
 
 **주요 기능**
 

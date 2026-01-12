@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/api/const.py
+
 from __future__ import annotations
 
 DOMAIN = "seoul_bike"
@@ -27,5 +29,5 @@ CONF_UPDATE_INTERVAL = "update_interval_seconds"
 
 # Device info
 MANUFACTURER = "@1bobby-git"
-MODEL_CONTROLLER = "Seoul Bike API"
-MODEL_STATION = "Seoul Bike Station"
+MODEL_CONTROLLER = "Open API"
+MODEL_STATION = "대여소"

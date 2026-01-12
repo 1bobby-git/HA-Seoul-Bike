@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/api/sensor.py
+
 """Sensors for Seoul Bike integration."""
 from __future__ import annotations
 
@@ -14,11 +16,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, INTEGRATION_NAME, MANUFACTURER, MODEL_CONTROLLER, MODEL_STATION
 from .coordinator import SeoulBikeCoordinator, haversine_m
 
+try:
+    from .device import resolve_location_device_name
+except Exception:  # pragma: no cover - runtime fallback
+    def resolve_location_device_name(hass, location_entity_id: str) -> str | None:
+        return None
 
-def _main_device(entry: ConfigEntry) -> DeviceInfo:
+
+def _main_device(entry: ConfigEntry, coordinator: SeoulBikeCoordinator) -> DeviceInfo:
+    name = resolve_location_device_name(coordinator.hass, coordinator.location_entity_id)
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name=INTEGRATION_NAME,
+        name=name or INTEGRATION_NAME,
         manufacturer=MANUFACTURER,
         model=MODEL_CONTROLLER,
         sw_version="1.0",
@@ -68,7 +77,7 @@ class BaseSeoulBikeSensor(CoordinatorEntity[SeoulBikeCoordinator], SensorEntity)
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _main_device(self._entry)
+        return _main_device(self._entry, self.coordinator)
 
 
 class NearbyTotalBikesSensor(BaseSeoulBikeSensor):
@@ -78,7 +87,7 @@ class NearbyTotalBikesSensor(BaseSeoulBikeSensor):
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_nearby_total_bikes"
-        self._attr_name = f"{INTEGRATION_NAME} 주변 총 대여가능"
+        self._attr_name = f"{INTEGRATION_NAME} 주변 총 대여 가능"
 
     @property
     def native_value(self) -> int:
@@ -88,7 +97,7 @@ class NearbyTotalBikesSensor(BaseSeoulBikeSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
             "내 위치 엔티티": self.coordinator.location_entity_id,
-            "주변 반경(m)": self.coordinator.radius_m,
+            "주변 반경 (m)": self.coordinator.radius_m,
             "최소 자전거 수": self.coordinator.min_bikes,
             "중심점 소스": self.coordinator.center_source,
             "중심 위도": self.coordinator.center_lat,
@@ -104,7 +113,7 @@ class NearbyRecommendedBikesSensor(BaseSeoulBikeSensor):
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_nearby_recommended_bikes"
-        self._attr_name = f"{INTEGRATION_NAME} 주변 추천 대여소 대여가능"
+        self._attr_name = f"{INTEGRATION_NAME} 주변 추천 대여소 대여 가능"
 
     @property
     def native_value(self) -> int:
@@ -115,7 +124,7 @@ class NearbyRecommendedBikesSensor(BaseSeoulBikeSensor):
         return {
             "추천 목록 개수": len(self.coordinator.nearby),
             "추천 목록": self.coordinator.nearby,
-            "주변 반경(m)": self.coordinator.radius_m,
+            "주변 반경 (m)": self.coordinator.radius_m,
             "최소 자전거 수": self.coordinator.min_bikes,
             "상태": self.coordinator.nearby_status,
         }
@@ -138,7 +147,7 @@ class NearbyStationsListSensor(BaseSeoulBikeSensor):
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
             "내 위치 엔티티": self.coordinator.location_entity_id,
-            "주변 반경(m)": self.coordinator.radius_m,
+            "주변 반경 (m)": self.coordinator.radius_m,
             "최소 자전거 수": self.coordinator.min_bikes,
             "중심점 소스": self.coordinator.center_source,
             "중심 위도": self.coordinator.center_lat,
@@ -170,11 +179,11 @@ class ApiDiagnosticSensor(BaseSeoulBikeSensor):
             "마지막 업데이트 성공": self.coordinator.last_update_success,
             "마지막 예외": str(last_exc) if last_exc else None,
             "전체 row 수": d.get("total_rows"),
-            "대여가능>0 정류소 수": d.get("nonzero_station_count"),
+            "대여 가능 > 0 정류소 수": d.get("nonzero_station_count"),
             "요청 메타": d.get("fetch_meta"),
-            "입력한 정류소": d.get("configured_station_inputs"),
-            "변환 성공": d.get("resolved"),
-            "변환 실패": d.get("unresolved"),
+            "입력한 정류소": list(self.coordinator.configured_station_inputs),
+            "변환 성공": list(self.coordinator.resolved_stations),
+            "변환 실패": list(self.coordinator.unresolved_stations),
             "주변 결과 개수": d.get("nearby_count"),
         }
 
@@ -206,7 +215,7 @@ class _StationBase(CoordinatorEntity[SeoulBikeCoordinator], SensorEntity):
         return {
             "정류소 ID": s.station_id,
             "정류소 번호": s.station_no,
-            "정류소명": s.station_title,
+            "정류소 명": s.station_title,
         }
 
 
@@ -217,7 +226,7 @@ class StationBikesTotalSensor(_StationBase):
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry, station_id: str) -> None:
         super().__init__(coordinator, entry, station_id)
         self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_total"
-        self._attr_name = "대여가능 자전거"
+        self._attr_name = "대여 가능 자전거"
 
     @property
     def native_value(self) -> int | None:
@@ -232,7 +241,7 @@ class StationBikesGeneralSensor(_StationBase):
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry, station_id: str) -> None:
         super().__init__(coordinator, entry, station_id)
         self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_general"
-        self._attr_name = "대여가능(일반)"
+        self._attr_name = "대여 가능 (일반)"
 
     @property
     def native_value(self) -> int | None:
@@ -247,7 +256,7 @@ class StationBikesTeenSensor(_StationBase):
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry, station_id: str) -> None:
         super().__init__(coordinator, entry, station_id)
         self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_teen"
-        self._attr_name = "대여가능(새싹)"
+        self._attr_name = "대여 가능 (새싹)"
 
     @property
     def native_value(self) -> int | None:

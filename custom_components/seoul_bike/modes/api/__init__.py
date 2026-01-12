@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/api/__init__.py
+
 from __future__ import annotations
 
 import re
@@ -17,8 +19,18 @@ from .const import (
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL_SECONDS,
     DEFAULT_RADIUS_M,
+    INTEGRATION_NAME,
+    MANUFACTURER,
+    MODEL_CONTROLLER,
+    MODEL_STATION,
 )
 from .coordinator import SeoulBikeCoordinator
+
+try:
+    from .device import resolve_location_device_name
+except Exception:  # pragma: no cover - runtime fallback
+    def resolve_location_device_name(hass, location_entity_id: str) -> str | None:
+        return None
 
 
 _STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[\.．\)\-]|번|\s)")
@@ -54,10 +66,22 @@ def _collect_station_inputs(entry: ConfigEntry) -> list[str]:
     data = entry.data or {}
     opts = entry.options or {}
 
-    candidates: list[Any] = []
-    candidates.append(data.get(CONF_STATION_IDS))
-    candidates.append(opts.get(CONF_STATION_IDS))
+    def _dedup(values: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for v in values:
+            if v not in seen:
+                seen.add(v)
+                out.append(v)
+        return out
 
+    if CONF_STATION_IDS in opts:
+        return _dedup(_normalize_station_input(opts.get(CONF_STATION_IDS)))
+
+    if CONF_STATION_IDS in data:
+        return _dedup(_normalize_station_input(data.get(CONF_STATION_IDS)))
+
+    candidates: list[Any] = []
     for k in (
         "station_list",
         "station_list_raw",
@@ -67,8 +91,10 @@ def _collect_station_inputs(entry: ConfigEntry) -> list[str]:
         "station_ids_old",
         "station_id",
     ):
-        candidates.append(data.get(k))
-        candidates.append(opts.get(k))
+        if k in opts:
+            candidates.append(opts.get(k))
+        if k in data:
+            candidates.append(data.get(k))
 
     merged: list[str] = []
     seen = set()
@@ -148,6 +174,22 @@ def _cleanup_removed_station_entities(hass: HomeAssistant, entry: ConfigEntry, k
     dev_reg = dr.async_get(hass)
 
     prefix = f"{entry.entry_id}_"
+    keep_upper = {sid.upper() for sid in keep_station_ids}
+    removed_device_ids: set[str] = set()
+    main_device = dev_reg.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    main_device_id = main_device.id if main_device else None
+
+    def _extract_station_id(ident: str) -> str | None:
+        if ident.startswith(f"{entry.entry_id}:"):
+            return ident.split(":", 1)[1]
+        if ident.startswith(f"{entry.entry_id}_"):
+            return ident.split("_", 1)[1]
+        m = re.search(r"(ST-\d+)", ident, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        if ident[:1].isdigit() and ident.replace(" ", "").isdigit():
+            return ident
+        return None
 
     for ent in list(ent_reg.entities.values()):
         if ent.config_entry_id != entry.entry_id:
@@ -158,11 +200,14 @@ def _cleanup_removed_station_entities(hass: HomeAssistant, entry: ConfigEntry, k
             continue
 
         rest = uid[len(prefix) :]
-        if not rest.upper().startswith("ST-"):
+        rest_upper = rest.upper()
+        if not (rest_upper.startswith("ST-") or (rest and rest[0].isdigit())):
             continue
 
         station_id = rest.split("_", 1)[0].strip()
-        if station_id and station_id not in keep_station_ids:
+        if station_id and station_id.upper() not in keep_upper:
+            if ent.device_id:
+                removed_device_ids.add(ent.device_id)
             ent_reg.async_remove(ent.entity_id)
 
     for device in list(dev_reg.devices.values()):
@@ -172,11 +217,66 @@ def _cleanup_removed_station_entities(hass: HomeAssistant, entry: ConfigEntry, k
         for (dom, ident) in ids:
             if dom != DOMAIN:
                 continue
-            if isinstance(ident, str) and ident.startswith(f"{entry.entry_id}:"):
-                sid = ident.split(":", 1)[1]
-                if sid and sid not in keep_station_ids:
-                    dev_reg.async_remove_device(device.id)
+            if not isinstance(ident, str):
+                continue
+
+            sid = _extract_station_id(ident)
+
+            if sid and sid.upper() not in keep_upper:
+                dev_reg.async_remove_device(device.id)
+                removed_device_ids.discard(device.id)
                 break
+        else:
+            if main_device_id and device.via_device_id == main_device_id:
+                name = (device.name_by_user or device.name or "").strip()
+                name_sid = None
+                m = re.search(r"(ST-\d+)", name, re.IGNORECASE)
+                if m:
+                    name_sid = m.group(1)
+                elif name and name.split()[0].isdigit():
+                    name_sid = name.split()[0]
+
+                if (name_sid and name_sid.upper() not in keep_upper) or (not name_sid and not keep_upper):
+                    dev_reg.async_remove_device(device.id)
+                    removed_device_ids.discard(device.id)
+
+    if removed_device_ids:
+        active_device_ids = {ent.device_id for ent in ent_reg.entities.values() if ent.device_id}
+        for device_id in removed_device_ids:
+            if device_id in active_device_ids:
+                continue
+            device = dev_reg.devices.get(device_id)
+            if not device:
+                continue
+            if (DOMAIN, entry.entry_id) in (device.identifiers or set()):
+                continue
+            dev_reg.async_remove_device(device_id)
+
+
+def _update_device_registry(
+    hass: HomeAssistant, entry: ConfigEntry, coordinator: SeoulBikeCoordinator
+) -> None:
+    dev_reg = dr.async_get(hass)
+    desired_name = resolve_location_device_name(hass, coordinator.location_entity_id) or INTEGRATION_NAME
+
+    main_device = dev_reg.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    if main_device:
+        dev_reg.async_update_device(
+            main_device.id,
+            name=desired_name,
+            model=MODEL_CONTROLLER,
+            manufacturer=MANUFACTURER,
+        )
+
+    for station_id in coordinator.station_ids:
+        station_device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}:{station_id}")})
+        if station_device:
+            dev_reg.async_update_device(
+                station_device.id,
+                name=coordinator.get_station_device_name(station_id),
+                model=MODEL_STATION,
+                manufacturer=MANUFACTURER,
+            )
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -209,13 +309,12 @@ def _read_str_any(entry: ConfigEntry, key: str, default: str = "") -> str:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    api_key = str((entry.data or {}).get(CONF_API_KEY, "")).strip()
+    api_key = _read_str_any(entry, CONF_API_KEY, "")
 
     # ✅ UI에서 남긴 업데이트 주기 반영(옵션 우선, 없으면 최초 data)
     interval_s = _read_int_any(entry, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_SECONDS)
 
     coordinator = _make_coordinator(hass, api_key, interval_s)
-    await coordinator.async_config_entry_first_refresh()
 
     # ✅ 내 위치 엔티티도 옵션 우선, 없으면 최초 data
     coordinator.location_entity_id = _read_str_any(entry, CONF_LOCATION_ENTITY, "")
@@ -226,6 +325,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.max_results = 0  # 0 = 무제한
 
     inputs = _collect_station_inputs(entry)
+    coordinator.configured_station_inputs = inputs
+
+    await coordinator.async_config_entry_first_refresh()
     rows = (coordinator.data or {}).get("rows") or []
     resolved, unresolved = _resolve_station_inputs(inputs, rows)
     station_ids = [r["station_id"] for r in resolved]
@@ -241,6 +343,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.data["unresolved"] = unresolved
 
     _cleanup_removed_station_entities(hass, entry, set(station_ids))
+    _update_device_registry(hass, entry, coordinator)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {"coordinator": coordinator}

@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/cookie/button.py
+
 from __future__ import annotations
 
 from homeassistant.components.button import ButtonEntity
@@ -17,7 +19,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 class UseHistoryRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):
     _attr_has_entity_name = True
-    _attr_name = "새로고침"
+    _attr_name = "새로 고침"
     _attr_icon = "mdi:refresh"
 
     def __init__(self, coordinator: SeoulPublicBikeCoordinator) -> None:

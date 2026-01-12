@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/api/button.py
+
 """Buttons for Seoul Bike integration."""
 from __future__ import annotations
 
@@ -11,11 +13,18 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, INTEGRATION_NAME, MANUFACTURER, MODEL_CONTROLLER, MODEL_STATION
 from .coordinator import SeoulBikeCoordinator
 
+try:
+    from .device import resolve_location_device_name
+except Exception:  # pragma: no cover - runtime fallback
+    def resolve_location_device_name(hass, location_entity_id: str) -> str | None:
+        return None
 
-def _main_device(entry: ConfigEntry) -> DeviceInfo:
+
+def _main_device(entry: ConfigEntry, coordinator: SeoulBikeCoordinator) -> DeviceInfo:
+    name = resolve_location_device_name(coordinator.hass, coordinator.location_entity_id)
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name=INTEGRATION_NAME,
+        name=name or INTEGRATION_NAME,
         manufacturer=MANUFACTURER,
         model=MODEL_CONTROLLER,
         sw_version="1.0",
@@ -52,11 +61,11 @@ class MainRefreshButton(CoordinatorEntity[SeoulBikeCoordinator], ButtonEntity):
         super().__init__(coordinator)
         self._entry = entry
         self._attr_unique_id = f"{entry.entry_id}_refresh_all"
-        self._attr_name = f"{INTEGRATION_NAME} 지금 새로고침"
+        self._attr_name = f"{INTEGRATION_NAME} 지금 새로 고침"
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _main_device(self._entry)
+        return _main_device(self._entry, self.coordinator)
 
     async def async_press(self) -> None:
         await self.coordinator.async_request_refresh()
@@ -70,7 +79,7 @@ class StationRefreshButton(CoordinatorEntity[SeoulBikeCoordinator], ButtonEntity
         self._entry = entry
         self._station_id = station_id
         self._attr_unique_id = f"{entry.entry_id}_{station_id}_refresh"
-        self._attr_name = "정류소 새로고침"
+        self._attr_name = "정류소 새로 고침"
 
     @property
     def device_info(self) -> DeviceInfo:

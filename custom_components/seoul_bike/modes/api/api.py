@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/api/api.py
+
 """Seoul Bike OpenAPI client (Seoul Open Data Plaza)."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+# custom_components/seoul_bike/modes/cookie/coordinator.py
+
 from __future__ import annotations
 
 import logging
@@ -19,6 +21,13 @@ from .const import CONF_COOKIE, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 DEFAULT_SCAN_INTERVAL_S = 60
+_DATA_MARKER_RE = re.compile(
+    r"(kcal_box|payment_box|moveRentalStation\(\s*'ST-[^']+'\s*,\s*'[^']+'\s*\))",
+    re.IGNORECASE,
+)
+_LOGIN_FORM_RE = re.compile(r'<form[^>]+action=["\'][^"\']*(j_spring_security_check|login)[^"\']*["\']', re.IGNORECASE)
+_PASSWORD_INPUT_RE = re.compile(r'<input[^>]+type=["\']password["\']', re.IGNORECASE)
+_LOGOUT_MARKER_RE = re.compile(r"(logout|/logout|logout\.do)", re.IGNORECASE)
 
 
 def _strip_tags(s: str) -> str:
@@ -146,8 +155,17 @@ def _extract_payment_history(html: str) -> list[dict[str, Any]]:
 
 
 def _looks_like_login(html: str) -> bool:
-    t = (html or "").lower()
-    return ("로그인" in t and "비밀번호" in t) or ("/login" in t and "password" in t)
+    if not html:
+        return True
+
+    lower = html.lower()
+    if _DATA_MARKER_RE.search(html):
+        return False
+    if _LOGOUT_MARKER_RE.search(html):
+        return False
+    has_password = _PASSWORD_INPUT_RE.search(html)
+    has_login = ("j_spring_security_check" in lower and has_password) or (_LOGIN_FORM_RE.search(html) and has_password)
+    return bool(has_login)
 
 
 def _parse_ticket_expiry(left_html: str) -> datetime | None:
