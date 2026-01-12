@@ -138,7 +138,7 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not s:
             return station_id
         if s.station_no:
-            return f"{s.station_no} {s.station_title}".strip()
+            return f"{s.station_no}. {s.station_title}".strip()
         return s.station_title or s.station_id
 
     def _row_to_station(self, r: dict[str, Any]) -> Station | None:
