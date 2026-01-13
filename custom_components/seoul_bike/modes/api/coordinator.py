@@ -18,7 +18,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-_STATION_NO_RE = re.compile(r\"^\s*(\d+)\s*(?:[\.\)\-]|?|\s)\")
+_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[.)-]|\s)")
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -77,8 +77,8 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.location_entity_id: str = ""
         self.radius_m: int = 500
-        self.max_results: int = 0   # 0 = 무제한
-        self.min_bikes: int = 1     # 1로 고정
+        self.max_results: int = 0
+        self.min_bikes: int = 1
 
         self.center_source: str = "homeassistant_home"
         self.center_lat: float | None = None
