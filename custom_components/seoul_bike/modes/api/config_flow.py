@@ -70,7 +70,6 @@ class SeoulBikeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             location_entity = (user_input.get(CONF_LOCATION_ENTITY) or "").strip()
             update_interval = int(user_input.get(CONF_UPDATE_INTERVAL) or DEFAULT_UPDATE_INTERVAL_SECONDS)
 
-            # ✅ API 키 1개당 Entry 1개 강제
             if api_key:
                 await self.async_set_unique_id(_api_unique_id(api_key))
                 self._abort_if_unique_id_configured()
@@ -91,13 +90,11 @@ class SeoulBikeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data = {
                     CONF_API_KEY: api_key,
                     CONF_STATION_IDS: _parse_list(station_raw),
-                    # ✅ 최초 설정에서 내 위치 엔티티/업데이트 주기도 저장 (옵션이 비어도 적용되도록)
                     CONF_LOCATION_ENTITY: location_entity,
                     CONF_UPDATE_INTERVAL: update_interval,
                 }
                 return self.async_create_entry(title="따릉이 (Seoul Bike)", data=data)
 
-        # ✅ 최초 설정에서도 내 위치 엔티티를 입력하도록 필드 노출(필수)
         schema = vol.Schema(
             {
                 vol.Required(CONF_API_KEY): str,

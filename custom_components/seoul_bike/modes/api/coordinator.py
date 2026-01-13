@@ -18,7 +18,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
-_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[\.．\)\-]|번|\s)")
+_STATION_NO_RE = re.compile(r\"^\s*(\d+)\s*(?:[\.\)\-]|?|\s)\")
 
 
 def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -75,7 +75,6 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._api = SeoulBikeApi(async_get_clientsession(hass), str(api_key).strip())
         self.api = self._api
 
-        # ✅ UI에서 안 받는 값들은 __init__/__init__.py에서 고정 주입
         self.location_entity_id: str = ""
         self.radius_m: int = 500
         self.max_results: int = 0   # 0 = 무제한
@@ -95,6 +94,8 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.configured_station_inputs: list[str] = []
         self.resolved_stations: list[dict[str, Any]] = []
         self.unresolved_stations: list[dict[str, Any]] = []
+        self.last_error: str | None = None
+        self.last_http_status: int | None = None
 
         super().__init__(
             hass=hass,
@@ -102,6 +103,15 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             name=f"{DOMAIN}_coordinator",
             update_interval=timedelta(seconds=int(update_interval_s)),
         )
+
+    def _extract_last_http_status(self) -> int | None:
+        meta = self._api.last_meta or {}
+        status = meta.get("http_status") or meta.get("status")
+        if status is None:
+            pages = meta.get("pages")
+            if isinstance(pages, list) and pages:
+                status = pages[-1].get("http_status") or pages[-1].get("status")
+        return status
 
     def _compute_center(self) -> None:
         self.center_source = "homeassistant_home"
@@ -186,8 +196,8 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         radius = max(1, int(self.radius_m or 500))
-        min_bikes = 1  # ✅ 고정
-        max_results = int(self.max_results or 0)  # ✅ 0이면 무제한
+        min_bikes = 1
+        max_results = int(self.max_results or 0)
 
         candidates: list[dict[str, Any]] = []
         total = 0
@@ -204,7 +214,7 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 {
                     "station_id": s.station_id,
                     "station_no": s.station_no,
-                    "station_name": f"{s.station_no} {s.station_title}".strip() if s.station_no else s.station_title,
+                    "station_name": f"{s.station_no}. {s.station_title}".strip() if s.station_no else s.station_title,
                     "bikes_total": s.bikes_total,
                     "distance_m": round(dist, 1),
                 }
@@ -217,12 +227,13 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if max_results > 0:
             self.nearby = candidates[:max_results]
         else:
-            self.nearby = candidates  # ✅ 무제한
+            self.nearby = candidates
 
         self.nearby_recommended_bikes = sum(int(x.get("bikes_total") or 0) for x in self.nearby)
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
+            self.last_error = None
             rows = await self._api.fetch_all(page_size=1000, max_pages=10, retries=2)
             if not isinstance(rows, list):
                 raise UpdateFailed("API returned non-list rows")
@@ -255,6 +266,7 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._compute_nearby()
 
             fetch_meta = self._api.last_meta or {}
+            self.last_http_status = self._extract_last_http_status()
 
             return {
                 "rows": rows,
@@ -269,8 +281,14 @@ class SeoulBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
 
         except SeoulBikeApiAuthError as err:
+            self.last_error = f"auth_failed: {err}"
+            self.last_http_status = self._extract_last_http_status()
             raise UpdateFailed(f"auth_failed: {err}") from err
         except SeoulBikeApiError as err:
+            self.last_error = str(err)
+            self.last_http_status = self._extract_last_http_status()
             raise UpdateFailed(str(err)) from err
         except Exception as err:
+            self.last_error = str(err)
+            self.last_http_status = self._extract_last_http_status()
             raise UpdateFailed(str(err)) from err

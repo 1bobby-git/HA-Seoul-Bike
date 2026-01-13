@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - runtime fallback
         return None
 
 
-_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[\.．\)\-]|번|\s)")
+_STATION_NO_RE = re.compile(r\"^\s*(\d+)\s*(?:[\.\)\-]|?|\s)\")
 
 
 def _normalize_station_input(value: Any) -> list[str]:
@@ -311,15 +311,12 @@ def _read_str_any(entry: ConfigEntry, key: str, default: str = "") -> str:
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api_key = _read_str_any(entry, CONF_API_KEY, "")
 
-    # ✅ UI에서 남긴 업데이트 주기 반영(옵션 우선, 없으면 최초 data)
     interval_s = _read_int_any(entry, CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL_SECONDS)
 
     coordinator = _make_coordinator(hass, api_key, interval_s)
 
-    # ✅ 내 위치 엔티티도 옵션 우선, 없으면 최초 data
     coordinator.location_entity_id = _read_str_any(entry, CONF_LOCATION_ENTITY, "")
 
-    # ✅ 고정값(숨김): 반경 500m, 최소 자전거 1, 최대목록 무제한
     coordinator.radius_m = int(DEFAULT_RADIUS_M)
     coordinator.min_bikes = 1
     coordinator.max_results = 0  # 0 = 무제한

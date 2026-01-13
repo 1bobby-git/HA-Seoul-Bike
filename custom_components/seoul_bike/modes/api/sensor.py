@@ -11,7 +11,9 @@ from homeassistant.const import UnitOfLength
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import DOMAIN, INTEGRATION_NAME, MANUFACTURER, MODEL_CONTROLLER, MODEL_STATION
 from .coordinator import SeoulBikeCoordinator, haversine_m
@@ -45,6 +47,58 @@ def _station_device(entry: ConfigEntry, coordinator: SeoulBikeCoordinator, stati
     )
 
 
+
+def _object_id(mode: str, identifier: str, name: str) -> str:
+    return slugify(f"seoul_bike_{mode}_{identifier}_{name}")
+
+
+def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | None, object_id: str, domain: str) -> None:
+    if not unique_id or not object_id:
+        return
+    ent_reg = er.async_get(hass)
+    ent_reg.async_get_or_create(
+        domain,
+        DOMAIN,
+        unique_id,
+        suggested_object_id=object_id,
+        config_entry=entry,
+    )
+
+
+def _object_id_for_entity(ent: SensorEntity) -> str | None:
+    if isinstance(ent, NearbyTotalBikesSensor):
+        return _object_id("api", "main", "nearby_total_bikes")
+    if isinstance(ent, NearbyRecommendedBikesSensor):
+        return _object_id("api", "main", "nearby_recommended_bikes")
+    if isinstance(ent, NearbyStationsListSensor):
+        return _object_id("api", "main", "nearby_station_list")
+    if isinstance(ent, ApiDiagnosticSensor):
+        return _object_id("api", "main", "api_diagnostic")
+    if isinstance(ent, ApiLastHttpStatusSensor):
+        return _object_id("api", "main", "last_http_status")
+    if isinstance(ent, ApiLastErrorSensor):
+        return _object_id("api", "main", "last_error")
+    if isinstance(ent, StationBikesTotalSensor):
+        return _object_id("api", ent._station_id, "rent_bike_total")
+    if isinstance(ent, StationBikesGeneralSensor):
+        return _object_id("api", ent._station_id, "rent_bike_normal")
+    if isinstance(ent, StationBikesTeenSensor):
+        return _object_id("api", ent._station_id, "rent_bike_sprout")
+    if isinstance(ent, StationBikesRepairSensor):
+        return _object_id("api", ent._station_id, "rent_bike_repair")
+    if isinstance(ent, StationIdSensor):
+        return _object_id("api", ent._station_id, "station_id")
+    if isinstance(ent, StationDistanceSensor):
+        return _object_id("api", ent._station_id, "distance_m")
+    return None
+
+
+def _register_entity_ids(hass: HomeAssistant, entry: ConfigEntry, entities: list[SensorEntity]) -> None:
+    for ent in entities:
+        object_id = _object_id_for_entity(ent)
+        if object_id:
+            _ensure_entity_id(hass, entry, ent.unique_id, object_id, "sensor")
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: SeoulBikeCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
 
@@ -53,6 +107,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         NearbyRecommendedBikesSensor(coordinator, entry),
         NearbyStationsListSensor(coordinator, entry),
         ApiDiagnosticSensor(coordinator, entry),
+        ApiLastHttpStatusSensor(coordinator, entry),
+        ApiLastErrorSensor(coordinator, entry),
     ]
 
     for station_id in coordinator.station_ids:
@@ -67,6 +123,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ]
         )
 
+    _register_entity_ids(hass, entry, entities)
     async_add_entities(entities)
 
 
@@ -176,6 +233,8 @@ class ApiDiagnosticSensor(BaseSeoulBikeSensor):
         last_exc = self.coordinator.last_exception
         d = self.coordinator.data or {}
         return {
+            "last_error": self.coordinator.last_error,
+            "last_http_status": self.coordinator.last_http_status,
             "마지막 업데이트 성공": self.coordinator.last_update_success,
             "마지막 예외": str(last_exc) if last_exc else None,
             "전체 row 수": d.get("total_rows"),
@@ -187,6 +246,35 @@ class ApiDiagnosticSensor(BaseSeoulBikeSensor):
             "주변 결과 개수": d.get("nearby_count"),
         }
 
+
+class ApiLastHttpStatusSensor(BaseSeoulBikeSensor):
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_name = "Last HTTP Status"
+    _attr_icon = "mdi:cloud-check"
+
+    def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_api_last_http_status"
+
+    @property
+    def native_value(self):
+        return self.coordinator.last_http_status
+
+
+class ApiLastErrorSensor(BaseSeoulBikeSensor):
+    _attr_has_entity_name = True
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_name = "Last Error"
+    _attr_icon = "mdi:alert-circle-outline"
+
+    def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_api_last_error"
+
+    @property
+    def native_value(self):
+        return self.coordinator.last_error or "none"
 
 class _StationBase(CoordinatorEntity[SeoulBikeCoordinator], SensorEntity):
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry, station_id: str) -> None:
@@ -235,13 +323,13 @@ class StationBikesTotalSensor(_StationBase):
 
 
 class StationBikesGeneralSensor(_StationBase):
-    _attr_icon = "mdi:bicycle-basket"
+    _attr_icon = "mdi:bicycle"
     _attr_native_unit_of_measurement = "대"
 
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry, station_id: str) -> None:
         super().__init__(coordinator, entry, station_id)
         self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_general"
-        self._attr_name = "대여 가능 (일반)"
+        self._attr_name = "대여 가능 자전거 (일반)"
 
     @property
     def native_value(self) -> int | None:
@@ -250,13 +338,13 @@ class StationBikesGeneralSensor(_StationBase):
 
 
 class StationBikesTeenSensor(_StationBase):
-    _attr_icon = "mdi:bicycle-basket"
+    _attr_icon = "mdi:sprout"
     _attr_native_unit_of_measurement = "대"
 
     def __init__(self, coordinator: SeoulBikeCoordinator, entry: ConfigEntry, station_id: str) -> None:
         super().__init__(coordinator, entry, station_id)
         self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_teen"
-        self._attr_name = "대여 가능 (새싹)"
+        self._attr_name = "대여 가능 자전거 (새싹)"
 
     @property
     def native_value(self) -> int | None:
@@ -309,7 +397,6 @@ class StationDistanceSensor(_StationBase):
         if not s:
             return None
 
-        # ✅ 옵션에서 내 위치 엔티티를 나중에 추가해도 즉시 반영되도록,
         # 센서 계산 시점마다 현재 중심점 재계산
         try:
             self.coordinator._compute_center()

@@ -21,11 +21,17 @@ from .modes.api.const import (
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL_SECONDS,
 )
-from .modes.cookie.const import CONF_COOKIE
+from .modes.cookie.const import (
+    CONF_COOKIE,
+    CONF_USE_HISTORY_WEEK,
+    CONF_USE_HISTORY_MONTH,
+    DEFAULT_USE_HISTORY_WEEK,
+    DEFAULT_USE_HISTORY_MONTH,
+)
 from .modes.cookie.api import SeoulPublicBikeSiteApi
 
 _LOGGER = logging.getLogger(__name__)
-_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[\.．\)\-]|번|\s)")
+_STATION_NO_RE = re.compile(r\"^\s*(\d+)\s*(?:[\.\)\-]|?|\s)\")
 _LOGIN_FORM_RE = re.compile(
     r'<form[^>]+action=["\'][^"\']*(j_spring_security_check|login)[^"\']*["\']',
     re.IGNORECASE,
@@ -335,10 +341,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             cookie = (user_input.get(CONF_COOKIE) or "").strip()
             cookie_line = _normalize_cookie_input(cookie)
+            use_week = bool(user_input.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
+            use_month = bool(user_input.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
             if not cookie:
                 errors["base"] = "cookie_required"
             elif not cookie_line:
                 errors["base"] = "cookie_invalid_format"
+            elif not (use_week or use_month):
+                errors["base"] = "period_required"
             else:
                 try:
                     await _validate_cookie(self.hass, cookie_line)
@@ -354,10 +364,18 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         data={
                             CONF_MODE: MODE_COOKIE,
                             CONF_COOKIE: cookie_line,
+                            CONF_USE_HISTORY_WEEK: use_week,
+                            CONF_USE_HISTORY_MONTH: use_month,
                         },
                     )
 
-        schema = vol.Schema({vol.Required(CONF_COOKIE): str})
+        schema = vol.Schema(
+            {
+                vol.Required(CONF_COOKIE): str,
+                vol.Optional(CONF_USE_HISTORY_WEEK, default=DEFAULT_USE_HISTORY_WEEK): bool,
+                vol.Optional(CONF_USE_HISTORY_MONTH, default=DEFAULT_USE_HISTORY_MONTH): bool,
+            }
+        )
         return self.async_show_form(step_id="cookie", data_schema=schema, errors=errors)
 
     @staticmethod
@@ -459,10 +477,14 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         if user_input is not None:
             cookie = (user_input.get(CONF_COOKIE) or "").strip()
             cookie_line = _normalize_cookie_input(cookie)
+            use_week = bool(user_input.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
+            use_month = bool(user_input.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
             if not cookie:
                 errors["base"] = "cookie_required"
             elif not cookie_line:
                 errors["base"] = "cookie_invalid_format"
+            elif not (use_week or use_month):
+                errors["base"] = "period_required"
             else:
                 try:
                     await _validate_cookie(self.hass, cookie_line)
@@ -487,11 +509,26 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         title="따릉이 (Cookie)",
                     )
 
-                    return self.async_create_entry(title="", data={CONF_COOKIE: cookie_line})
+                    return self.async_create_entry(
+                        title="",
+                        data={
+                            CONF_COOKIE: cookie_line,
+                            CONF_USE_HISTORY_WEEK: use_week,
+                            CONF_USE_HISTORY_MONTH: use_month,
+                        },
+                    )
 
         schema = vol.Schema(
             {
                 vol.Required(CONF_COOKIE, default=opts.get(CONF_COOKIE, data.get(CONF_COOKIE, ""))): str,
+                vol.Optional(
+                    CONF_USE_HISTORY_WEEK,
+                    default=bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK)),
+                ): bool,
+                vol.Optional(
+                    CONF_USE_HISTORY_MONTH,
+                    default=bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH)),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="cookie", data_schema=schema, errors=errors)
