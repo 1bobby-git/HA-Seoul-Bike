@@ -33,7 +33,7 @@ except Exception:  # pragma: no cover - runtime fallback
         return None
 
 
-_STATION_NO_RE = re.compile(r\"^\s*(\d+)\s*(?:[\.\)\-]|?|\s)\")
+_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[\.．\)\-]|번|\s)")
 
 
 def _normalize_station_input(value: Any) -> list[str]:
