@@ -31,7 +31,7 @@ from .modes.cookie.const import (
 from .modes.cookie.api import SeoulPublicBikeSiteApi
 
 _LOGGER = logging.getLogger(__name__)
-_STATION_NO_RE = re.compile(r\"^\s*(\d+)\s*(?:[\.\)\-]|?|\s)\")
+_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[\.．\)\-]|번|\s)")
 _LOGIN_FORM_RE = re.compile(
     r'<form[^>]+action=["\'][^"\']*(j_spring_security_check|login)[^"\']*["\']',
     re.IGNORECASE,
