@@ -22,6 +22,47 @@ from .const import (
 )
 from .coordinator import SeoulPublicBikeCoordinator
 
+_MAX_FAVORITE_IDS = 20
+
+
+def _summarize_data(data: dict) -> dict:
+    periods_out: dict = {}
+    periods = data.get("periods") if isinstance(data, dict) else None
+    if isinstance(periods, dict):
+        for key, payload in periods.items():
+            if not isinstance(payload, dict):
+                continue
+            history = payload.get("history") or []
+            periods_out[key] = {
+                "period_start": payload.get("period_start"),
+                "period_end": payload.get("period_end"),
+                "history_count": len(history) if isinstance(history, list) else 0,
+                "last": payload.get("last"),
+                "kcal": payload.get("kcal"),
+            }
+
+    favorites = data.get("favorites") if isinstance(data, dict) else None
+    favorite_ids: list[str] = []
+    if isinstance(favorites, list):
+        for f in favorites:
+            if isinstance(f, dict):
+                sid = f.get("station_id")
+                if sid:
+                    favorite_ids.append(str(sid))
+            if len(favorite_ids) >= _MAX_FAVORITE_IDS:
+                break
+
+    return {
+        "updated_at": data.get("updated_at") if isinstance(data, dict) else None,
+        "error": data.get("error") if isinstance(data, dict) else None,
+        "validation_status": data.get("validation_status") if isinstance(data, dict) else None,
+        "last_request": data.get("last_request") if isinstance(data, dict) else None,
+        "periods": periods_out,
+        "favorites_count": len(favorites) if isinstance(favorites, list) else 0,
+        "favorite_station_ids": favorite_ids,
+        "favorite_station_ids_truncated": isinstance(favorites, list) and len(favorites) > _MAX_FAVORITE_IDS,
+    }
+
 
 
 def _object_id(mode: str, identifier: str, name: str) -> str:
@@ -82,4 +123,4 @@ class UseHistoryDumpBinarySensor(CoordinatorEntity[SeoulPublicBikeCoordinator], 
 
     @property
     def extra_state_attributes(self):
-        return self.coordinator.data or {}
+        return _summarize_data(self.coordinator.data or {})
