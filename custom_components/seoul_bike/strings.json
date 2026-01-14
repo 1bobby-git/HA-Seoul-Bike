@@ -1,4 +1,4 @@
-{
+﻿{
   "title": "따릉이 (Seoul Public Bike)",
   "config": {
     "step": {
@@ -21,9 +21,11 @@
       },
       "cookie": {
         "title": "Cookie 방식 (Web Pulling)",
-        "description": "[따릉이](https://www.bikeseoul.com)에 로그인한 브라우저에서 쿠키를 복사해 붙여넣으세요.\n\n- **쿠키**: 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청을 선택 → Request Headers의 `Cookie` 전체 값을 복사해 붙여넣기 (JSESSIONID만 복사하면 안 됩니다)\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 짧으면 서버에 과부하를 줄 수 있음)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
+        "description": "[따릉이](https://www.bikeseoul.com) 계정으로 로그인하고 아이디/패스워드를 입력하세요.\n\n- **아이디/패스워드**: 로그인에 사용 (쿠키 자동 생성)\n- **쿠키 (선택)**: 고급 사용자를 위한 직접 입력\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 잦은 호출은 서버에 과부하를 줄 수 있습니다)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
         "data": {
-          "cookie": "쿠키",
+          "cookie_username": "아이디",
+          "cookie_password": "패스워드",
+          "cookie": "쿠키 (선택)",
           "use_history_week": "이용 내역 활성화 (1주일)",
           "use_history_month": "이용 내역 활성화 (1개월)",
           "cookie_update_interval_seconds": "업데이트 주기 (초)"
@@ -32,12 +34,15 @@
     },
     "error": {
       "cookie_required": "쿠키를 입력해야 합니다.",
+      "login_required": "아이디/패스워드 또는 쿠키를 입력해야 합니다.",
       "cookie_invalid_format": "쿠키는 `Cookie:`로 시작하는 전체 헤더 값을 입력해야 합니다.",
       "invalid_cookie": "쿠키 인증에 실패했습니다. 쿠키를 확인하세요.",
+      "invalid_login": "아이디/패스워드 인증에 실패했습니다.",
       "cannot_connect": "서버에 연결할 수 없습니다.",
       "invalid_auth": "인증에 실패했습니다. API 키를 확인하세요.",
       "station_not_found": "존재하지 않는 정류소가 포함되어 있습니다. 정류소 번호 또는 ST-코드를 다시 확인하세요.",
-      "unknown": "알 수 없는 오류가 발생했습니다."
+      "unknown": "알 수 없는 오류가 발생했습니다.",
+      "period_required": "하나 이상의 기간을 선택하세요."
     },
     "abort": {
       "already_configured": "이미 동일한 설정으로 등록되어 있습니다."
@@ -64,9 +69,11 @@
       },
       "cookie": {
         "title": "Cookie 방식 (Web Pulling)",
-        "description": "[따릉이](https://www.bikeseoul.com)에 로그인한 브라우저에서 쿠키를 복사해 붙여넣으세요.\n\n- **쿠키**: 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청을 선택 → Request Headers의 `Cookie` 전체 값을 복사해 붙여넣기 (JSESSIONID만 복사하면 안 됩니다)\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 짧으면 서버에 과부하를 줄 수 있음)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
+        "description": "[따릉이](https://www.bikeseoul.com) 계정으로 로그인하고 아이디/패스워드를 입력하세요.\n\n- **아이디/패스워드**: 로그인에 사용 (쿠키 자동 생성)\n- **쿠키 (선택)**: 고급 사용자를 위한 직접 입력\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 잦은 호출은 서버에 과부하를 줄 수 있습니다)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
         "data": {
-          "cookie": "쿠키",
+          "cookie_username": "아이디",
+          "cookie_password": "패스워드",
+          "cookie": "쿠키 (선택)",
           "use_history_week": "이용 내역 활성화 (1주일)",
           "use_history_month": "이용 내역 활성화 (1개월)",
           "cookie_update_interval_seconds": "업데이트 주기 (초)"
@@ -75,16 +82,15 @@
     },
     "error": {
       "cookie_required": "쿠키를 입력해야 합니다.",
+      "login_required": "아이디/패스워드 또는 쿠키를 입력해야 합니다.",
       "cookie_invalid_format": "쿠키는 `Cookie:`로 시작하는 전체 헤더 값을 입력해야 합니다.",
       "invalid_cookie": "쿠키 인증에 실패했습니다. 쿠키를 확인하세요.",
+      "invalid_login": "아이디/패스워드 인증에 실패했습니다.",
       "cannot_connect": "서버에 연결할 수 없습니다.",
       "invalid_auth": "인증에 실패했습니다. API 키를 확인하세요.",
       "station_not_found": "존재하지 않는 정류소가 포함되어 있습니다. 정류소 번호 또는 ST-코드를 다시 확인하세요.",
       "unknown": "알 수 없는 오류가 발생했습니다.",
       "period_required": "하나 이상의 기간을 선택하세요."
-    },
-    "abort": {
-      "already_configured": "이미 동일한 설정으로 등록되어 있습니다."
     }
   }
 }

@@ -92,6 +92,19 @@ class SeoulPublicBikeSiteApi:
         h["Accept"] = "application/json, text/plain, */*"
         return h
 
+    def _cookie_header_from_session(self) -> str:
+        try:
+            cookies = self._session.cookie_jar.filter_cookies(self.BASE)
+        except Exception:
+            cookies = {}
+        parts: list[str] = []
+        for name, morsel in cookies.items():
+            value = getattr(morsel, "value", None)
+            if value is None:
+                continue
+            parts.append(f"{name}={value}")
+        return "; ".join(parts)
+
     def _record_meta(self, method: str, url: str, status: int | None, error: str | None = None) -> None:
         self.last_meta = {
             "method": method,
@@ -202,6 +215,74 @@ class SeoulPublicBikeSiteApi:
             if not self.last_meta or self.last_meta.get("url") != url or self.last_meta.get("status") is None:
                 self._record_meta("POST", url, None, str(err))
             raise
+
+    def _extract_login_form(self, html: str) -> tuple[str, dict[str, str], str | None, str | None]:
+        action = ""
+        form_html = ""
+        for m in re.finditer(r"<form[^>]*>(.*?)</form>", html or "", flags=re.DOTALL | re.IGNORECASE):
+            form_html = m.group(0)
+            action_m = re.search(r'action=["\']([^"\']+)["\']', form_html, flags=re.IGNORECASE)
+            if not action_m:
+                continue
+            cand = action_m.group(1).strip()
+            if "j_spring_security_check" in cand or "login" in cand:
+                action = cand
+                break
+            if not action:
+                action = cand
+        if not action:
+            action = "/j_spring_security_check"
+
+        inputs: dict[str, str] = {}
+        user_field: str | None = None
+        pass_field: str | None = None
+
+        for im in re.finditer(r"<input[^>]*>", form_html, flags=re.IGNORECASE):
+            tag = im.group(0)
+            name_m = re.search(r'name=["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
+            if not name_m:
+                continue
+            name = name_m.group(1).strip()
+            type_m = re.search(r'type=["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
+            itype = (type_m.group(1).strip().lower() if type_m else "text")
+            value_m = re.search(r'value=["\']([^"\']*)["\']', tag, flags=re.IGNORECASE)
+            value = value_m.group(1) if value_m else ""
+            inputs[name] = value
+
+            lname = name.lower()
+            if itype == "password" and pass_field is None:
+                pass_field = name
+            if user_field is None and itype in ("text", "email"):
+                if any(k in lname for k in ("user", "id", "login")):
+                    user_field = name
+        if user_field is None:
+            for name in inputs:
+                if any(k in name.lower() for k in ("user", "id", "login")):
+                    user_field = name
+                    break
+        return action, inputs, user_field, pass_field
+
+    async def login(self, username: str, password: str) -> str:
+        login_page = await self._get_text("/login.do", referer_path="/login.do")
+        action, inputs, user_field, pass_field = self._extract_login_form(login_page)
+        if not user_field:
+            user_field = "j_username"
+        if not pass_field:
+            pass_field = "j_password"
+        inputs[user_field] = username
+        inputs[pass_field] = password
+        await self._post_text(action, inputs, referer_path="/login.do")
+
+        status = await self.fetch_rent_status()
+        login = str(status.get("loginYn") or "").strip().upper()
+        if login != "Y":
+            raise ValueError("login_failed")
+
+        cookie_header = self._cookie_header_from_session()
+        if not cookie_header:
+            raise ValueError("cookie_not_found")
+        self._cookie = cookie_header
+        return cookie_header
 
     def _absolute_url(self, href: str) -> str:
         if href.startswith("http://") or href.startswith("https://"):

@@ -1,4 +1,4 @@
-{
+﻿{
   "title": "Ddareungi (Seoul Public Bike)",
   "config": {
     "step": {
@@ -21,9 +21,11 @@
       },
       "cookie": {
         "title": "Cookie method (Web Pulling)",
-        "description": "Paste a cookie from a browser logged into [Ddareungi](https://www.bikeseoul.com).\n\n- **Cookie**: In DevTools Network tab, select a `bikeseoul.com` request and copy the entire `Cookie` value from Request Headers (not just JSESSIONID)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and paste a new cookie.",
+        "description": "Sign in with your [Ddareungi](https://www.bikeseoul.com) account and enter your username/password.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Cookie (optional)**: Advanced users can paste it directly\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and replace the cookie.",
         "data": {
-          "cookie": "Cookie",
+          "cookie_username": "Username",
+          "cookie_password": "Password",
+          "cookie": "Cookie (optional)",
           "use_history_week": "Enable use history (1 week)",
           "use_history_month": "Enable use history (1 month)",
           "cookie_update_interval_seconds": "Update interval (seconds)"
@@ -32,8 +34,10 @@
     },
     "error": {
       "cookie_required": "Cookie is required.",
+      "login_required": "Enter username/password or a cookie.",
       "cookie_invalid_format": "Cookie must start with `Cookie:` and include the full header value.",
       "invalid_cookie": "Invalid cookie. Check the cookie value.",
+      "invalid_login": "Invalid username or password.",
       "cannot_connect": "Cannot connect.",
       "invalid_auth": "Invalid authentication. Check the API key.",
       "station_not_found": "Some station IDs are invalid. Please check station numbers or ST codes.",
@@ -65,9 +69,11 @@
       },
       "cookie": {
         "title": "Cookie method (Web Pulling)",
-        "description": "Paste a cookie from a browser logged into [Ddareungi](https://www.bikeseoul.com).\n\n- **Cookie**: In DevTools Network tab, select a `bikeseoul.com` request and copy the entire `Cookie` value from Request Headers (not just JSESSIONID)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and paste a new cookie.",
+        "description": "Sign in with your [Ddareungi](https://www.bikeseoul.com) account and enter your username/password.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Cookie (optional)**: Advanced users can paste it directly\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and replace the cookie.",
         "data": {
-          "cookie": "Cookie",
+          "cookie_username": "Username",
+          "cookie_password": "Password",
+          "cookie": "Cookie (optional)",
           "use_history_week": "Enable use history (1 week)",
           "use_history_month": "Enable use history (1 month)",
           "cookie_update_interval_seconds": "Update interval (seconds)"
@@ -76,8 +82,10 @@
     },
     "error": {
       "cookie_required": "Cookie is required.",
+      "login_required": "Enter username/password or a cookie.",
       "cookie_invalid_format": "Cookie must start with `Cookie:` and include the full header value.",
       "invalid_cookie": "Invalid cookie. Check the cookie value.",
+      "invalid_login": "Invalid username or password.",
       "cannot_connect": "Cannot connect.",
       "invalid_auth": "Invalid authentication. Check the API key.",
       "station_not_found": "Some station IDs are invalid. Please check station numbers or ST codes.",

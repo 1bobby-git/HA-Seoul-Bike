@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from typing import Any
 
 import aiohttp
 
@@ -23,6 +24,8 @@ from .modes.api.const import (
 )
 from .modes.cookie.const import (
     CONF_COOKIE,
+    CONF_COOKIE_PASSWORD,
+    CONF_COOKIE_USERNAME,
     CONF_USE_HISTORY_WEEK,
     CONF_USE_HISTORY_MONTH,
     CONF_COOKIE_UPDATE_INTERVAL,
@@ -63,6 +66,12 @@ def _status_login_ok(status: dict[str, Any]) -> bool | None:
     if member and member != "Y":
         return False
     return True
+
+
+async def _login_and_get_cookie(hass, username: str, password: str) -> str:
+    async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
+        api = SeoulPublicBikeSiteApi(session, "")
+        return await api.login(username, password)
 
 
 def _has_cookie_data_markers(html: str) -> bool:
@@ -367,8 +376,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            cookie = (user_input.get(CONF_COOKIE) or "").strip()
-            cookie_line = _normalize_cookie_input(cookie)
+            cookie_raw = (user_input.get(CONF_COOKIE) or "").strip()
+            cookie_line = _normalize_cookie_input(cookie_raw) if cookie_raw else None
+            username = (user_input.get(CONF_COOKIE_USERNAME) or "").strip()
+            password = (user_input.get(CONF_COOKIE_PASSWORD) or "").strip()
             use_week = bool(user_input.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
             use_month = bool(user_input.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
             try:
@@ -377,36 +388,47 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
             except Exception:
                 update_interval = DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
-            if not cookie:
-                errors["base"] = "cookie_required"
-            elif not cookie_line:
+
+            if not (cookie_line or (username and password)):
+                errors["base"] = "login_required"
+            elif cookie_raw and not cookie_line:
                 errors["base"] = "cookie_invalid_format"
             elif not (use_week or use_month):
                 errors["base"] = "period_required"
             else:
-                try:
-                    await _validate_cookie(self.hass, cookie_line)
-                except CookieValidationError:
-                    errors["base"] = "invalid_cookie"
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.warning("Cookie validation failed: %s", err)
-                    errors["base"] = "cannot_connect"
+                if cookie_line:
+                    try:
+                        await _validate_cookie(self.hass, cookie_line)
+                    except CookieValidationError:
+                        errors["base"] = "invalid_cookie"
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning("Cookie validation failed: %s", err)
+                        errors["base"] = "cannot_connect"
+                else:
+                    try:
+                        cookie_line = await _login_and_get_cookie(self.hass, username, password)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning("Login validation failed: %s", err)
+                        errors["base"] = "invalid_login"
 
-                if not errors:
+                if not errors and cookie_line:
+                    data = {
+                        CONF_MODE: MODE_COOKIE,
+                        CONF_COOKIE: cookie_line,
+                        CONF_USE_HISTORY_WEEK: use_week,
+                        CONF_USE_HISTORY_MONTH: use_month,
+                        CONF_COOKIE_UPDATE_INTERVAL: update_interval,
+                    }
                     return self.async_create_entry(
                         title="따릉이 (Cookie)",
-                        data={
-                            CONF_MODE: MODE_COOKIE,
-                            CONF_COOKIE: cookie_line,
-                            CONF_USE_HISTORY_WEEK: use_week,
-                            CONF_USE_HISTORY_MONTH: use_month,
-                            CONF_COOKIE_UPDATE_INTERVAL: update_interval,
-                        },
+                        data=data,
                     )
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_COOKIE): str,
+                vol.Optional(CONF_COOKIE_USERNAME, default=""): str,
+                vol.Optional(CONF_COOKIE_PASSWORD, default=""): str,
+                vol.Optional(CONF_COOKIE, default=""): str,
                 vol.Optional(CONF_USE_HISTORY_WEEK, default=DEFAULT_USE_HISTORY_WEEK): bool,
                 vol.Optional(CONF_USE_HISTORY_MONTH, default=DEFAULT_USE_HISTORY_MONTH): bool,
                 vol.Optional(
@@ -514,8 +536,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
         data = self._config_entry.data or {}
 
         if user_input is not None:
-            cookie = (user_input.get(CONF_COOKIE) or "").strip()
-            cookie_line = _normalize_cookie_input(cookie)
+            cookie_raw = (user_input.get(CONF_COOKIE) or "").strip()
+            cookie_line = _normalize_cookie_input(cookie_raw) if cookie_raw else None
+            username = (user_input.get(CONF_COOKIE_USERNAME) or "").strip()
+            password = (user_input.get(CONF_COOKIE_PASSWORD) or "").strip()
             use_week = bool(user_input.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
             use_month = bool(user_input.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
             try:
@@ -524,22 +548,30 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                 )
             except Exception:
                 update_interval = DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
-            if not cookie:
-                errors["base"] = "cookie_required"
-            elif not cookie_line:
+
+            if not (cookie_line or (username and password)):
+                errors["base"] = "login_required"
+            elif cookie_raw and not cookie_line:
                 errors["base"] = "cookie_invalid_format"
             elif not (use_week or use_month):
                 errors["base"] = "period_required"
             else:
-                try:
-                    await _validate_cookie(self.hass, cookie_line)
-                except CookieValidationError:
-                    errors["base"] = "invalid_cookie"
-                except Exception as err:  # noqa: BLE001
-                    _LOGGER.warning("Cookie validation failed (options): %s", err)
-                    errors["base"] = "cannot_connect"
+                if cookie_line:
+                    try:
+                        await _validate_cookie(self.hass, cookie_line)
+                    except CookieValidationError:
+                        errors["base"] = "invalid_cookie"
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning("Cookie validation failed (options): %s", err)
+                        errors["base"] = "cannot_connect"
+                else:
+                    try:
+                        cookie_line = await _login_and_get_cookie(self.hass, username, password)
+                    except Exception as err:  # noqa: BLE001
+                        _LOGGER.warning("Login validation failed (options): %s", err)
+                        errors["base"] = "invalid_login"
 
-                if not errors:
+                if not errors and cookie_line:
                     new_data = dict(data)
                     new_data[CONF_MODE] = MODE_COOKIE
                     new_data[CONF_COOKIE] = cookie_line
@@ -567,7 +599,9 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                vol.Required(CONF_COOKIE, default=opts.get(CONF_COOKIE, data.get(CONF_COOKIE, ""))): str,
+                vol.Optional(CONF_COOKIE_USERNAME, default=""): str,
+                vol.Optional(CONF_COOKIE_PASSWORD, default=""): str,
+                vol.Optional(CONF_COOKIE, default=""): str,
                 vol.Optional(
                     CONF_USE_HISTORY_WEEK,
                     default=bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK)),
