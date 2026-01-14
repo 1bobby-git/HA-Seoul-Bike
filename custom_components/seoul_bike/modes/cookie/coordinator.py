@@ -172,6 +172,21 @@ def _extract_payment_history(html: str) -> list[dict[str, Any]]:
     return []
 
 
+def _status_login_ok(status: dict[str, Any]) -> bool | None:
+    if not status:
+        return None
+    login = str(status.get("loginYn") or "").strip().upper()
+    if not login:
+        return None
+    if login != "Y":
+        return False
+    member = str(status.get("memberYn") or "").strip().upper()
+    if member and member != "Y":
+        return False
+    return True
+
+
+
 def _looks_like_login(html: str) -> bool:
     if not html:
         return True
@@ -388,6 +403,50 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not (use_week or use_month):
                 use_month = True
 
+
+            rent_status: dict[str, Any] = {}
+            user_status: dict[str, Any] = {}
+            reconsent_status: dict[str, Any] = {}
+            login_ok: bool | None = None
+            try:
+                rent_status = await self._api.fetch_rent_status()
+                login_ok = _status_login_ok(rent_status)
+            except Exception as err:
+                rent_status = {"error": str(err)}
+                login_ok = None
+
+            if login_ok is False:
+                self.validation_status = "login_page"
+                self.last_error = "login_page"
+                self._sync_last_request_meta()
+                return {
+                    "error": "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
+                    "updated_at": datetime.now().isoformat(),
+                    "periods": {},
+                    "ticket_expiry": None,
+                    "favorites": [],
+                    "favorite_status": {},
+                    "rent_status": rent_status,
+                    "user_status": user_status,
+                    "reconsent_status": reconsent_status,
+                    "validation_status": self.validation_status,
+                    "last_request": {
+                        "url": self.last_request_url,
+                        "http_status": self.last_http_status,
+                        "error": self.last_error,
+                    },
+                }
+
+            if login_ok is not False:
+                try:
+                    user_status = await self._api.fetch_user_status()
+                except Exception as err:
+                    user_status = {"error": str(err)}
+                try:
+                    reconsent_status = await self._api.fetch_reconsent_status()
+                except Exception as err:
+                    reconsent_status = {"error": str(err)}
+
             base_html = await self._api.fetch_use_history_html()
             period_html: dict[str, str] = {}
             if use_week:
@@ -406,6 +465,9 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "ticket_expiry": None,
                     "favorites": [],
                     "favorite_status": {},
+                    "rent_status": rent_status,
+                    "user_status": user_status,
+                    "reconsent_status": reconsent_status,
                     "validation_status": self.validation_status,
                     "last_request": {
                         "url": self.last_request_url,
@@ -426,6 +488,18 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     **_parse_use_history(period_html["1m"]),
                     "updated_at": updated_at,
                 }
+
+            for pdata in periods.values():
+                hist = pdata.get("history") or []
+                hist_id = None
+                if isinstance(hist, list) and hist:
+                    hist_id = (hist[0] or {}).get("history_id")
+                if hist_id:
+                    try:
+                        pdata["move_route"] = await self._api.fetch_move_route(str(hist_id))
+                    except Exception as err:
+                        pdata["move_route"] = {"error": str(err)}
+
 
             left_html = await self._api.fetch_left_page_html()
             ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
@@ -455,6 +529,9 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "ticket_expiry": ticket_expiry_iso,
                 "favorites": favorites,          # counts 포함
                 "favorite_status": favorite_status,
+                "rent_status": rent_status,
+                "user_status": user_status,
+                "reconsent_status": reconsent_status,
                 "validation_status": self.validation_status,
                 "last_request": {
                     "url": self.last_request_url,

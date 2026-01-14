@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timedelta
@@ -86,6 +87,11 @@ class SeoulPublicBikeSiteApi:
             h["Referer"] = f"{self.BASE}{referer_path}"
         return h
 
+    def _headers_json(self, referer_path: str | None = None) -> dict[str, str]:
+        h = self._headers(referer_path)
+        h["Accept"] = "application/json, text/plain, */*"
+        return h
+
     def _record_meta(self, method: str, url: str, status: int | None, error: str | None = None) -> None:
         self.last_meta = {
             "method": method,
@@ -107,6 +113,28 @@ class SeoulPublicBikeSiteApi:
                 if resp.status >= 400:
                     resp.raise_for_status()
                 return text
+        except Exception as err:
+            if not self.last_meta or self.last_meta.get("url") != url or self.last_meta.get("status") is None:
+                self._record_meta("GET", url, None, str(err))
+            raise
+
+    async def _get_json(self, path: str, params: dict | None = None, referer_path: str | None = None) -> dict[str, Any]:
+        url = f"{self.BASE}{path}"
+        try:
+            async with self._session.get(url, params=params, headers=self._headers_json(referer_path), allow_redirects=True) as resp:
+                text = await resp.text(errors="ignore")
+                err = f"http_{resp.status}" if resp.status >= 400 else None
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    data = None
+                    err = err or "non_json_response"
+                self._record_meta("GET", str(resp.url), resp.status, err)
+                if resp.status >= 400:
+                    resp.raise_for_status()
+                if not isinstance(data, dict):
+                    raise ValueError("non_json_response")
+                return data
         except Exception as err:
             if not self.last_meta or self.last_meta.get("url") != url or self.last_meta.get("status") is None:
                 self._record_meta("GET", url, None, str(err))
@@ -138,6 +166,38 @@ class SeoulPublicBikeSiteApi:
                 if resp.status >= 400:
                     resp.raise_for_status()
                 return text
+        except Exception as err:
+            if not self.last_meta or self.last_meta.get("url") != url or self.last_meta.get("status") is None:
+                self._record_meta("POST", url, None, str(err))
+            raise
+
+    async def _post_json(
+        self,
+        path: str,
+        data: dict[str, str] | None = None,
+        referer_path: str | None = None,
+    ) -> dict[str, Any]:
+        url = f"{self.BASE}{path}" if path.startswith("/") else self._absolute_url(path)
+        try:
+            async with self._session.post(
+                url,
+                data=data or {},
+                headers=self._headers_json(referer_path),
+                allow_redirects=True,
+            ) as resp:
+                text = await resp.text(errors="ignore")
+                err = f"http_{resp.status}" if resp.status >= 400 else None
+                try:
+                    payload = json.loads(text)
+                except Exception:
+                    payload = None
+                    err = err or "non_json_response"
+                self._record_meta("POST", str(resp.url), resp.status, err)
+                if resp.status >= 400:
+                    resp.raise_for_status()
+                if not isinstance(payload, dict):
+                    raise ValueError("non_json_response")
+                return payload
         except Exception as err:
             if not self.last_meta or self.last_meta.get("url") != url or self.last_meta.get("status") is None:
                 self._record_meta("POST", url, None, str(err))
@@ -333,6 +393,48 @@ class SeoulPublicBikeSiteApi:
         if self._looks_like_use_history(action_html):
             return action_html
         return await self._get_text(path, referer_path=path)
+
+    async def fetch_rent_status(self) -> dict[str, Any]:
+        last_exc: Exception | None = None
+        for path in ("/app/rentCheck/isChkRentStatus.do", "/app/rent/isChkRentStatus.do"):
+            try:
+                return await self._get_json(path, referer_path=path)
+            except Exception as err:
+                last_exc = err
+        if last_exc:
+            raise last_exc
+        return {}
+
+    async def fetch_user_status(self) -> dict[str, Any]:
+        return await self._get_json("/app/rent/chkUserSataus.do", referer_path="/app/rent/chkUserSataus.do")
+
+    async def fetch_reconsent_status(self) -> dict[str, Any]:
+        return await self._get_json("/checkReconsentAjax.do", referer_path="/")
+
+    async def fetch_move_route(self, rent_hist_seq: str | None) -> dict[str, Any]:
+        if not rent_hist_seq:
+            return {}
+        return await self._post_json(
+            "/app/mybike/getHistoryMoveRoute.do",
+            data={"rentHistSeq": str(rent_hist_seq)},
+            referer_path="/app/mybike/getMemberUseHistory.do",
+        )
+
+    async def fetch_coupon_validation(self, coupon_no: str | None) -> dict[str, Any]:
+        if not coupon_no:
+            return {}
+        return await self._post_json(
+            "/app/mybike/coupon/validChkVoucherAjax.do",
+            data={"couponNo": str(coupon_no)},
+            referer_path="/app/mybike/coupon/validChkVoucher.do",
+        )
+
+    async def fetch_booking_cancel(self) -> dict[str, Any]:
+        return await self._post_json(
+            "/app/rent/exeBookingCancelProc.do",
+            data={},
+            referer_path="/app/rent/",
+        )
 
     async def fetch_left_page_html(self) -> str:
         return await self._get_text("/myLeftPage.do", referer_path="/myLeftPage.do")

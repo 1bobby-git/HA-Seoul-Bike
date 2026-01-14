@@ -51,6 +51,20 @@ class CookieValidationError(Exception):
     """Invalid cookie error."""
 
 
+def _status_login_ok(status: dict[str, Any]) -> bool | None:
+    if not status:
+        return None
+    login = str(status.get("loginYn") or "").strip().upper()
+    if not login:
+        return None
+    if login != "Y":
+        return False
+    member = str(status.get("memberYn") or "").strip().upper()
+    if member and member != "Y":
+        return False
+    return True
+
+
 def _has_cookie_data_markers(html: str) -> bool:
     if not html:
         return False
@@ -137,6 +151,18 @@ async def _validate_cookie(hass, cookie: str) -> None:
         _LOGGER.debug("Cookie validation start (len=%s)", len(cookie or ""))
         htmls: list[str | None] = []
         errors: list[Exception] = []
+
+        try:
+            status = await api.fetch_rent_status()
+            login_ok = _status_login_ok(status)
+            if login_ok is True:
+                return
+            if login_ok is False:
+                raise CookieValidationError("invalid_cookie")
+        except CookieValidationError:
+            raise
+        except Exception as err:  # noqa: BLE001
+            errors.append(err)
 
         for fetch in (
             api.fetch_use_history_html,
