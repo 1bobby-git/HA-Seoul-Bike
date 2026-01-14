@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 from datetime import timedelta, datetime
+from math import asin, cos, radians, sin, sqrt
 from typing import Any
 from html import unescape
 from html.parser import HTMLParser
@@ -18,10 +20,20 @@ from homeassistant.util import dt as dt_util
 from .api import SeoulPublicBikeSiteApi
 from .const import (
     CONF_COOKIE,
+    CONF_COOKIE_PASSWORD,
     CONF_COOKIE_UPDATE_INTERVAL,
+    CONF_COOKIE_USERNAME,
+    CONF_LOCATION_ENTITY,
+    CONF_MAX_RESULTS,
+    CONF_MIN_BIKES,
+    CONF_RADIUS_M,
+    CONF_STATION_IDS,
     CONF_USE_HISTORY_WEEK,
     CONF_USE_HISTORY_MONTH,
     DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS,
+    DEFAULT_MAX_RESULTS,
+    DEFAULT_MIN_BIKES,
+    DEFAULT_RADIUS_M,
     DEFAULT_USE_HISTORY_WEEK,
     DEFAULT_USE_HISTORY_MONTH,
     DOMAIN,
@@ -37,6 +49,29 @@ _DATA_MARKER_RE = re.compile(
 _LOGIN_FORM_RE = re.compile(r'<form[^>]+action=["\'][^"\']*(j_spring_security_check|login)[^"\']*["\']', re.IGNORECASE)
 _PASSWORD_INPUT_RE = re.compile(r'<input[^>]+type=["\']password["\']', re.IGNORECASE)
 _LOGOUT_MARKER_RE = re.compile(r"(logout|/logout|logout\.do)", re.IGNORECASE)
+_STATION_NO_RE = re.compile(r"^\s*(\d+)\s*(?:[.)-]|\s)")
+
+
+def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6371000.0
+    dlat = radians(lat2 - lat1)
+    dlon = radians(lon2 - lon1)
+    a = sin(dlat / 2) ** 2 + cos(radians(lat1)) * cos(radians(lat2)) * sin(dlon / 2) ** 2
+    c = 2 * asin(sqrt(a))
+    return r * c
+
+
+@dataclass(slots=True)
+class Station:
+    station_id: str
+    station_no: str
+    station_title: str
+    lat: float
+    lon: float
+    bikes_total: int
+    bikes_general: int
+    bikes_sprout: int
+    bikes_repair: int
 
 
 def _strip_tags(s: str) -> str:
@@ -55,6 +90,25 @@ def _to_float(text: str) -> float | None:
         return float(m.group(0))
     except Exception:
         return None
+
+
+def _to_int(text: str | int | None, default: int = 0) -> int:
+    try:
+        return int(str(text).strip())
+    except Exception:
+        return int(default)
+
+
+def _parse_station_list(raw: str | list[str]) -> list[str]:
+    if isinstance(raw, list):
+        items = [str(x).strip() for x in raw if str(x).strip()]
+        return list(dict.fromkeys(items))
+    raw = (raw or "").strip()
+    if not raw:
+        return []
+    parts = [p.strip() for p in raw.replace("\n", ",").replace("\r", ",").split(",")]
+    parts = [p for p in parts if p]
+    return list(dict.fromkeys(parts))
 
 
 def _extract_div_by_class(html: str, class_name: str) -> str | None:
@@ -355,6 +409,26 @@ def _parse_use_history(html: str) -> dict[str, Any]:
     }
 
 
+def _fallback_station(
+    prev: dict[str, Station],
+    station_id: str | None,
+    station_no: str | None,
+    raw_id: str | None,
+) -> Station | None:
+    if not prev:
+        return None
+    if station_id and station_id in prev:
+        return prev.get(station_id)
+    if station_no:
+        for st in prev.values():
+            if st.station_no == station_no:
+                return st
+    if raw_id:
+        for st in prev.values():
+            if st.station_id == raw_id or st.station_no == raw_id:
+                return st
+    return None
+
 class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -366,6 +440,19 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.last_http_status: int | None = None
         self.last_request_url: str | None = None
         self.validation_status: str | None = None
+        self.location_entity_id: str = ""
+        self.radius_m: int = DEFAULT_RADIUS_M
+        self.max_results: int = DEFAULT_MAX_RESULTS
+        self.min_bikes: int = DEFAULT_MIN_BIKES
+        self.center_source: str = "homeassistant_home"
+        self.center_lat: float | None = None
+        self.center_lon: float | None = None
+        self.nearby_status: str = "unknown"
+        self.nearby: list[dict[str, Any]] = []
+        self.nearby_total_bikes: int = 0
+        self.nearby_recommended_bikes: int = 0
+        self.station_ids: list[str] = []
+        self.stations_by_id: dict[str, Station] = {}
 
         try:
             update_interval_s = int(
@@ -390,6 +477,131 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._api.last_error and not self.last_error:
             self.last_error = self._api.last_error
 
+    def _compute_center(self) -> None:
+        self.center_source = "homeassistant_home"
+        self.center_lat = self.hass.config.latitude
+        self.center_lon = self.hass.config.longitude
+
+        ent_id = (self.location_entity_id or "").strip()
+        if not ent_id:
+            self.nearby_status = "ok"
+            return
+
+        st = self.hass.states.get(ent_id)
+        if not st:
+            self.nearby_status = "location_entity_not_found"
+            return
+
+        lat = st.attributes.get("latitude")
+        lon = st.attributes.get("longitude")
+        if lat is None or lon is None:
+            self.nearby_status = "location_no_coords"
+            return
+
+        try:
+            self.center_lat = float(lat)
+            self.center_lon = float(lon)
+            self.center_source = ent_id
+            self.nearby_status = "ok"
+        except Exception:
+            self.nearby_status = "location_invalid_coords"
+
+    def _station_from_status(
+        self,
+        status: dict[str, Any],
+        fallback_station_id: str | None,
+        fallback_station_no: str | None,
+        fallback_name: str | None,
+    ) -> Station | None:
+        sid = str(status.get("stationId") or fallback_station_id or fallback_station_no or "").strip()
+        if not sid:
+            return None
+
+        raw_name = str(status.get("stationName") or fallback_name or "").strip()
+        station_no = str(status.get("stationNo") or fallback_station_no or "").strip()
+        station_title = raw_name
+
+        if raw_name:
+            m = _STATION_NO_RE.match(raw_name)
+            if m:
+                station_no = station_no or m.group(1)
+                station_title = raw_name[m.end() :].strip(" .-")
+
+        lat = _to_float(status.get("stationLatitude")) or 0.0
+        lon = _to_float(status.get("stationLongitude")) or 0.0
+
+        bikes_total = _to_int(status.get("parkingBikeTotCnt"))
+        bikes_general = _to_int(status.get("parkingBikeTotCntGeneral"), bikes_total)
+        bikes_sprout = _to_int(status.get("parkingBikeTotCntTeen"), 0)
+        bikes_repair = _to_int(status.get("parkingBikeTotCntRepair"), 0)
+
+        if bikes_total <= 0:
+            bikes_total = _to_int(status.get("bikes_total"))
+        if bikes_general <= 0:
+            bikes_general = _to_int(status.get("bikes_general"), bikes_total)
+        if bikes_sprout <= 0:
+            bikes_sprout = _to_int(status.get("bikes_sprout"), 0)
+        if bikes_repair <= 0:
+            bikes_repair = _to_int(status.get("bikes_repair"), 0)
+
+        return Station(
+            station_id=sid,
+            station_no=station_no,
+            station_title=station_title or raw_name or sid,
+            lat=float(lat),
+            lon=float(lon),
+            bikes_total=bikes_total,
+            bikes_general=bikes_general,
+            bikes_sprout=bikes_sprout,
+            bikes_repair=bikes_repair,
+        )
+
+    def _compute_nearby(self) -> None:
+        self._compute_center()
+
+        self.nearby = []
+        self.nearby_total_bikes = 0
+        self.nearby_recommended_bikes = 0
+
+        if self.center_lat is None or self.center_lon is None:
+            return
+
+        radius = max(1, int(self.radius_m or DEFAULT_RADIUS_M))
+        min_bikes = max(0, int(self.min_bikes or 0))
+        max_results = int(self.max_results or 0)
+
+        candidates: list[dict[str, Any]] = []
+        total = 0
+
+        for s in self.stations_by_id.values():
+            if not s.lat or not s.lon:
+                continue
+            dist = haversine_m(self.center_lat, self.center_lon, s.lat, s.lon)
+            if dist > radius:
+                continue
+            if s.bikes_total < min_bikes:
+                continue
+
+            total += s.bikes_total
+            candidates.append(
+                {
+                    "station_id": s.station_id,
+                    "station_no": s.station_no,
+                    "station_name": f"{s.station_no}. {s.station_title}".strip() if s.station_no else s.station_title,
+                    "bikes_total": s.bikes_total,
+                    "distance_m": round(dist, 1),
+                }
+            )
+
+        candidates.sort(key=lambda x: (-int(x.get("bikes_total") or 0), float(x.get("distance_m") or 0.0)))
+
+        self.nearby_total_bikes = total
+        if max_results > 0:
+            self.nearby = candidates[:max_results]
+        else:
+            self.nearby = candidates
+        self.nearby_recommended_bikes = sum(int(x.get("bikes_total") or 0) for x in self.nearby)
+
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             self.last_error = None
@@ -403,17 +615,57 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if not (use_week or use_month):
                 use_month = True
 
+            station_raw = opts.get(CONF_STATION_IDS, self.entry.data.get(CONF_STATION_IDS, []))
+            self.station_ids = _parse_station_list(station_raw)
+
+            self.location_entity_id = str(
+                opts.get(CONF_LOCATION_ENTITY, self.entry.data.get(CONF_LOCATION_ENTITY, "")) or ""
+            ).strip()
+            try:
+                self.radius_m = int(
+                    opts.get(CONF_RADIUS_M, self.entry.data.get(CONF_RADIUS_M, DEFAULT_RADIUS_M))
+                )
+            except Exception:
+                self.radius_m = DEFAULT_RADIUS_M
+            try:
+                self.max_results = int(
+                    opts.get(CONF_MAX_RESULTS, self.entry.data.get(CONF_MAX_RESULTS, DEFAULT_MAX_RESULTS))
+                )
+            except Exception:
+                self.max_results = DEFAULT_MAX_RESULTS
+            try:
+                self.min_bikes = int(
+                    opts.get(CONF_MIN_BIKES, self.entry.data.get(CONF_MIN_BIKES, DEFAULT_MIN_BIKES))
+                )
+            except Exception:
+                self.min_bikes = DEFAULT_MIN_BIKES
+
 
             rent_status: dict[str, Any] = {}
             user_status: dict[str, Any] = {}
             reconsent_status: dict[str, Any] = {}
             login_ok: bool | None = None
+            username = str(self.entry.data.get(CONF_COOKIE_USERNAME) or "").strip()
+            password = str(self.entry.data.get(CONF_COOKIE_PASSWORD) or "").strip()
             try:
                 rent_status = await self._api.fetch_rent_status()
                 login_ok = _status_login_ok(rent_status)
             except Exception as err:
                 rent_status = {"error": str(err)}
                 login_ok = None
+
+            if login_ok is False and username and password:
+                try:
+                    new_cookie = await self._api.login(username, password)
+                    self.hass.config_entries.async_update_entry(
+                        self.entry,
+                        data={**self.entry.data, CONF_COOKIE: new_cookie},
+                    )
+                    self._api.set_cookie(new_cookie)
+                    rent_status = await self._api.fetch_rent_status()
+                    login_ok = _status_login_ok(rent_status)
+                except Exception as err:
+                    _LOGGER.debug("Re-login failed: %s", err)
 
             if login_ok is False:
                 self.validation_status = "login_page"
@@ -521,6 +773,34 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "sprout": f.get("sprout"),
                 }
 
+            prev_stations = dict(self.stations_by_id)
+            stations_by_id: dict[str, Station] = {}
+            if self.station_ids:
+                for raw in self.station_ids:
+                    raw_id = str(raw).strip()
+                    if not raw_id:
+                        continue
+                    station_id = raw_id.upper() if raw_id.upper().startswith("ST-") else None
+                    station_no = raw_id if raw_id.isdigit() else None
+                    try:
+                        status = await self._api.fetch_station_status(station_id, station_no)
+                    except Exception as err:
+                        _LOGGER.debug("Station status fetch failed (%s): %s", raw_id, err)
+                        status = {}
+                    st = self._station_from_status(status, station_id, station_no, raw_id)
+                    if st:
+                        stations_by_id[st.station_id] = st
+                        continue
+                    fallback = _fallback_station(prev_stations, station_id, station_no, raw_id)
+                    if fallback:
+                        stations_by_id[fallback.station_id] = fallback
+
+            if stations_by_id or not prev_stations:
+                self.stations_by_id = stations_by_id
+            else:
+                self.stations_by_id = prev_stations
+            self._compute_nearby()
+
             self._sync_last_request_meta()
             return {
                 "error": None,
@@ -538,6 +818,8 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "http_status": self.last_http_status,
                     "error": self.last_error,
                 },
+                "nearby_count": len(self.nearby),
+                "station_count": len(self.stations_by_id),
             }
 
         except Exception as err:

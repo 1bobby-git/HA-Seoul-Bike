@@ -55,6 +55,12 @@ def _normalize_cookie(raw: str) -> str:
     return v
 
 
+def _strip_tags(text: str) -> str:
+    if not text:
+        return ""
+    return re.sub(r"<[^>]+>", "", text).strip()
+
+
 class SeoulPublicBikeSiteApi:
     BASE = "https://www.bikeseoul.com"
 
@@ -548,3 +554,88 @@ class SeoulPublicBikeSiteApi:
                 last_exc = e
 
         raise last_exc if last_exc else RuntimeError("대여소 실시간 페이지 요청 실패")
+
+    def _extract_station_status_html(self, html: str) -> dict[str, Any]:
+        if not html:
+            return {}
+
+        def _extract_value(key: str) -> str | None:
+            pattern = rf"{re.escape(key)}\\s*[:=]\\s*['\\\"]?([^'\\\"\\s,<>]+)"
+            m = re.search(pattern, html, flags=re.IGNORECASE)
+            if m:
+                return m.group(1)
+            pattern = rf"['\\\"]{re.escape(key)}['\\\"]\\s*:\\s*['\\\"]([^'\\\"]+)"
+            m = re.search(pattern, html, flags=re.IGNORECASE)
+            if m:
+                return m.group(1)
+            pattern = rf"['\\\"]{re.escape(key)}['\\\"]\\s*:\\s*(\\d+)"
+            m = re.search(pattern, html, flags=re.IGNORECASE)
+            if m:
+                return m.group(1)
+            return None
+
+        out: dict[str, Any] = {}
+        for key in (
+            "stationId",
+            "stationNo",
+            "stationName",
+            "stationLatitude",
+            "stationLongitude",
+            "parkingBikeTotCnt",
+            "parkingBikeTotCntGeneral",
+            "parkingBikeTotCntTeen",
+            "parkingBikeTotCntRepair",
+        ):
+            v = _extract_value(key)
+            if v is not None:
+                out[key] = v
+
+        if "stationId" not in out:
+            m = re.search(r"(ST-\\d+)", html, re.IGNORECASE)
+            if m:
+                out["stationId"] = m.group(1).upper()
+
+        if "stationName" not in out:
+            m = re.search(r"<h2[^>]*>(.*?)</h2>", html, flags=re.IGNORECASE | re.DOTALL)
+            if m:
+                out["stationName"] = _strip_tags(m.group(1))
+
+        if "parkingBikeTotCntGeneral" not in out or "parkingBikeTotCntTeen" not in out:
+            m = re.search(r"<p>\\s*(\\d+)\\s*/\\s*(\\d+)\\s*</p>", html, flags=re.IGNORECASE)
+            if m:
+                out.setdefault("parkingBikeTotCntGeneral", m.group(1))
+                out.setdefault("parkingBikeTotCntTeen", m.group(2))
+
+        if "parkingBikeTotCnt" not in out:
+            try:
+                total = int(out.get("parkingBikeTotCntGeneral") or 0) + int(out.get("parkingBikeTotCntTeen") or 0)
+                if total > 0:
+                    out["parkingBikeTotCnt"] = str(total)
+            except Exception:
+                pass
+
+        return out
+
+    async def fetch_station_status(self, station_id: str | None, station_no: str | None) -> dict[str, Any]:
+        params = None
+        if station_id and station_no:
+            params = {"stationId": station_id, "stationNo": station_no}
+        elif station_id:
+            params = {"stationId": station_id}
+        elif station_no:
+            params = {"stationNo": station_no}
+
+        try:
+            data = await self._get_json(
+                "/app/station/moveStationRealtimeStatus.do",
+                params=params,
+                referer_path="/app/mybike/favoriteStation.do",
+            )
+            if data:
+                return data
+        except Exception:
+            data = {}
+
+        html = await self.fetch_station_realtime_html(station_id, station_no)
+        parsed = self._extract_station_status_html(html)
+        return parsed or data

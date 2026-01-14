@@ -4,45 +4,27 @@
     "step": {
       "user": {
         "title": "따릉이 설정",
-        "description": "수집 방식을 선택하세요. 방식에 따라 제공 데이터가 다릅니다.\n\n- **API (Open API Polling)**: 대여소 실시간 잔여 수 + 내 위치 기반 추천 대여소 (Open API 키 필요)\n- **Cookie (Web Pulling)**: 개인 대여·반납 내역 + 즐겨찾는 대여소 현황 (로그인 쿠키 필요 / 만료 시 재입력)\n\n이 통합은 여러 번 추가할 수 있습니다. (예: API + Cookie 둘 다 설정)",
-        "data": {
-          "mode": "수집 방식"
-        }
-      },
-      "api": {
-        "title": "API 방식 (Open API Polling)",
-        "description": "서울 열린데이터광장 Open API 키와 옵션을 입력하세요.\n\n- **Open API 키**: [서울 열린데이터광장 (데이터셋)](https://data.seoul.go.kr/dataList/OA-15493/A/1/datasetView.do)에서 신청·발급\n- **내 위치 엔티티 (선택)**: 추천 대여소 계산 기준 위치\n- **업데이트 주기 (초)**: API 호출 간격 (너무 짧으면 호출 제한 가능)\n- **정류소 목록**: 쉼표/줄바꿈으로 구분 (정류소 번호 또는 ST-코드)\n  - 예: `4796`, `ST-2693`\n  - 팁: ST-코드가 가장 정확합니다.\n",
-        "data": {
-          "api_key": "Open API 키",
-          "location_entity": "내 위치 엔티티 (entity_id)",
-          "update_interval_seconds": "업데이트 주기 (초)",
-          "station_ids": "정류소 목록 (쉼표/줄바꿈). 예: 4796, ST-2693"
-        }
-      },
-      "cookie": {
-        "title": "Cookie 방식 (Web Pulling)",
-        "description": "[따릉이](https://www.bikeseoul.com) 계정으로 로그인하고 아이디/패스워드를 입력하세요.\n\n- **아이디/패스워드**: 로그인에 사용 (쿠키 자동 생성)\n- **쿠키 (선택)**: 고급 사용자를 위한 직접 입력\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 잦은 호출은 서버에 과부하를 줄 수 있습니다)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
+        "description": "따릉이 계정으로 로그인해 비공식 API를 사용합니다.\n\n- **아이디/패스워드**: 로그인에 사용 (쿠키 자동 생성)\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 잦은 호출은 서버에 과부하를 줄 수 있습니다)\n- **정류소 목록**: 쉼표/줄바꿈으로 구분 (정류소 번호 또는 ST-코드)\n  - 예: `4796`, `ST-2693`\n- **내 위치 엔티티 (선택)**: 주변 대여소 추천 기준 위치\n- **주변 반경/추천 개수/최소 자전거 수**: 주변 추천 조건\n",
         "data": {
           "cookie_username": "아이디",
           "cookie_password": "패스워드",
-          "cookie": "쿠키 (선택)",
           "use_history_week": "이용 내역 활성화 (1주일)",
           "use_history_month": "이용 내역 활성화 (1개월)",
-          "cookie_update_interval_seconds": "업데이트 주기 (초)"
+          "cookie_update_interval_seconds": "업데이트 주기 (초)",
+          "station_ids": "정류소 목록 (쉼표/줄바꿈). 예: 4796, ST-2693",
+          "location_entity": "내 위치 엔티티 (entity_id)",
+          "radius_m": "주변 반경 (m)",
+          "max_results": "추천 대여소 개수",
+          "min_bikes": "최소 자전거 수"
         }
       }
     },
     "error": {
-      "cookie_required": "쿠키를 입력해야 합니다.",
-      "login_required": "아이디/패스워드 또는 쿠키를 입력해야 합니다.",
-      "cookie_invalid_format": "쿠키는 `Cookie:`로 시작하는 전체 헤더 값을 입력해야 합니다.",
-      "invalid_cookie": "쿠키 인증에 실패했습니다. 쿠키를 확인하세요.",
+      "login_required": "아이디/패스워드를 입력해야 합니다.",
       "invalid_login": "아이디/패스워드 인증에 실패했습니다.",
+      "period_required": "하나 이상의 기간을 선택하세요.",
       "cannot_connect": "서버에 연결할 수 없습니다.",
-      "invalid_auth": "인증에 실패했습니다. API 키를 확인하세요.",
-      "station_not_found": "존재하지 않는 정류소가 포함되어 있습니다. 정류소 번호 또는 ST-코드를 다시 확인하세요.",
-      "unknown": "알 수 없는 오류가 발생했습니다.",
-      "period_required": "하나 이상의 기간을 선택하세요."
+      "unknown": "알 수 없는 오류가 발생했습니다."
     },
     "abort": {
       "already_configured": "이미 동일한 설정으로 등록되어 있습니다."
@@ -52,45 +34,27 @@
     "step": {
       "init": {
         "title": "따릉이 설정",
-        "description": "수집 방식을 선택하세요. 방식에 따라 제공 데이터가 다릅니다.\n\n- **API (Open API Polling)**: 대여소 실시간 잔여 수 + 내 위치 기반 추천 대여소 (Open API 키 필요)\n- **Cookie (Web Pulling)**: 개인 대여·반납 내역 + 즐겨찾는 대여소 현황 (로그인 쿠키 필요 / 만료 시 재입력)\n\n이 통합은 여러 번 추가할 수 있습니다. (예: API + Cookie 둘 다 설정)",
-        "data": {
-          "mode": "수집 방식"
-        }
-      },
-      "api": {
-        "title": "API 방식 (Open API Polling)",
-        "description": "서울 열린데이터광장 Open API 키와 옵션을 입력하세요.\n\n- **Open API 키**: [서울 열린데이터광장 (데이터셋)](https://data.seoul.go.kr/dataList/OA-15493/A/1/datasetView.do)에서 신청·발급\n- **내 위치 엔티티 (선택)**: 추천 대여소 계산 기준 위치\n- **업데이트 주기 (초)**: API 호출 간격 (너무 짧으면 호출 제한 가능)\n- **정류소 목록**: 쉼표/줄바꿈으로 구분 (정류소 번호 또는 ST-코드)\n  - 예: `4796`, `ST-2693`\n  - 팁: ST-코드가 가장 정확합니다.\n",
-        "data": {
-          "api_key": "Open API 키",
-          "location_entity": "내 위치 엔티티 (entity_id)",
-          "update_interval_seconds": "업데이트 주기 (초)",
-          "station_ids": "정류소 목록 (쉼표/줄바꿈). 예: 4796, ST-2693"
-        }
-      },
-      "cookie": {
-        "title": "Cookie 방식 (Web Pulling)",
-        "description": "[따릉이](https://www.bikeseoul.com) 계정으로 로그인하고 아이디/패스워드를 입력하세요.\n\n- **아이디/패스워드**: 로그인에 사용 (쿠키 자동 생성)\n- **쿠키 (선택)**: 고급 사용자를 위한 직접 입력\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 잦은 호출은 서버에 과부하를 줄 수 있습니다)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
+        "description": "따릉이 계정으로 로그인해 비공식 API를 사용합니다.\n\n- **아이디/패스워드**: 로그인에 사용 (쿠키 자동 생성)\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 잦은 호출은 서버에 과부하를 줄 수 있습니다)\n- **정류소 목록**: 쉼표/줄바꿈으로 구분 (정류소 번호 또는 ST-코드)\n  - 예: `4796`, `ST-2693`\n- **내 위치 엔티티 (선택)**: 주변 대여소 추천 기준 위치\n- **주변 반경/추천 개수/최소 자전거 수**: 주변 추천 조건\n",
         "data": {
           "cookie_username": "아이디",
           "cookie_password": "패스워드",
-          "cookie": "쿠키 (선택)",
           "use_history_week": "이용 내역 활성화 (1주일)",
           "use_history_month": "이용 내역 활성화 (1개월)",
-          "cookie_update_interval_seconds": "업데이트 주기 (초)"
+          "cookie_update_interval_seconds": "업데이트 주기 (초)",
+          "station_ids": "정류소 목록 (쉼표/줄바꿈). 예: 4796, ST-2693",
+          "location_entity": "내 위치 엔티티 (entity_id)",
+          "radius_m": "주변 반경 (m)",
+          "max_results": "추천 대여소 개수",
+          "min_bikes": "최소 자전거 수"
         }
       }
     },
     "error": {
-      "cookie_required": "쿠키를 입력해야 합니다.",
-      "login_required": "아이디/패스워드 또는 쿠키를 입력해야 합니다.",
-      "cookie_invalid_format": "쿠키는 `Cookie:`로 시작하는 전체 헤더 값을 입력해야 합니다.",
-      "invalid_cookie": "쿠키 인증에 실패했습니다. 쿠키를 확인하세요.",
+      "login_required": "아이디/패스워드를 입력해야 합니다.",
       "invalid_login": "아이디/패스워드 인증에 실패했습니다.",
+      "period_required": "하나 이상의 기간을 선택하세요.",
       "cannot_connect": "서버에 연결할 수 없습니다.",
-      "invalid_auth": "인증에 실패했습니다. API 키를 확인하세요.",
-      "station_not_found": "존재하지 않는 정류소가 포함되어 있습니다. 정류소 번호 또는 ST-코드를 다시 확인하세요.",
-      "unknown": "알 수 없는 오류가 발생했습니다.",
-      "period_required": "하나 이상의 기간을 선택하세요."
+      "unknown": "알 수 없는 오류가 발생했습니다."
     }
   }
 }

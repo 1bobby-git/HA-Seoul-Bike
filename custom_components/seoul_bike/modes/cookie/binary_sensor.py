@@ -58,6 +58,8 @@ def _summarize_data(data: dict) -> dict:
         "validation_status": data.get("validation_status") if isinstance(data, dict) else None,
         "last_request": data.get("last_request") if isinstance(data, dict) else None,
         "periods": periods_out,
+        "station_count": data.get("station_count") if isinstance(data, dict) else None,
+        "nearby_count": data.get("nearby_count") if isinstance(data, dict) else None,
         "favorites_count": len(favorites) if isinstance(favorites, list) else 0,
         "favorite_station_ids": favorite_ids,
         "favorite_station_ids_truncated": isinstance(favorites, list) and len(favorites) > _MAX_FAVORITE_IDS,

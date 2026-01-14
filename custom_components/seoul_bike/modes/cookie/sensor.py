@@ -8,7 +8,7 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -18,8 +18,11 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN,
     MANUFACTURER,
+    INTEGRATION_NAME,
     MODEL_USE_HISTORY,
     MODEL_FAVORITE_STATION,
+    MODEL_STATION,
+    MODEL_CONTROLLER,
     FAVORITE_DEVICE_PREFIX,
     DEVICE_NAME_USE_HISTORY_WEEK,
     DEVICE_NAME_USE_HISTORY_MONTH,
@@ -28,12 +31,43 @@ from .const import (
     DEFAULT_USE_HISTORY_WEEK,
     DEFAULT_USE_HISTORY_MONTH,
 )
-from .coordinator import SeoulPublicBikeCoordinator
+from .coordinator import SeoulPublicBikeCoordinator, haversine_m
 
 
 
 def _object_id(mode: str, identifier: str, name: str) -> str:
     return slugify(f"seoul_bike_{mode}_{identifier}_{name}")
+
+
+def _resolve_location_device_name(hass: HomeAssistant, location_entity_id: str) -> str | None:
+    entity_id = (location_entity_id or "").strip()
+    if not entity_id:
+        return None
+
+    state = hass.states.get(entity_id)
+    if state:
+        name = state.attributes.get("friendly_name")
+        if name:
+            return str(name)
+
+    ent_reg = er.async_get(hass)
+    ent = ent_reg.async_get(entity_id)
+    if ent and ent.device_id:
+        dev = dr.async_get(hass).devices.get(ent.device_id)
+        if dev:
+            return dev.name_by_user or dev.name
+
+    return None
+
+
+def _station_display_name(station: Any | None, fallback: str) -> str:
+    if not station:
+        return fallback
+    station_no = str(getattr(station, "station_no", "") or "").strip()
+    title = str(getattr(station, "station_title", "") or "").strip()
+    if station_no and title:
+        return f"{station_no}. {title}"
+    return title or station_no or fallback
 
 
 def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | None, object_id: str, domain: str) -> None:
@@ -90,6 +124,24 @@ def _object_id_for_entity(ent: SensorEntity) -> str | None:
         return _object_id("cookie", ent._station_id, name)
     if isinstance(ent, FavoriteStationIdSensor):
         return _object_id("cookie", ent._station_id, "station_id")
+    if isinstance(ent, NearbyTotalBikesSensor):
+        return _object_id("cookie", "main", "nearby_total_bikes")
+    if isinstance(ent, NearbyRecommendedBikesSensor):
+        return _object_id("cookie", "main", "nearby_recommended_bikes")
+    if isinstance(ent, NearbyStationsListSensor):
+        return _object_id("cookie", "main", "nearby_station_list")
+    if isinstance(ent, StationBikesTotalSensor):
+        return _object_id("cookie", ent._station_id, "rent_bike_total")
+    if isinstance(ent, StationBikesGeneralSensor):
+        return _object_id("cookie", ent._station_id, "rent_bike_normal")
+    if isinstance(ent, StationBikesSproutSensor):
+        return _object_id("cookie", ent._station_id, "rent_bike_sprout")
+    if isinstance(ent, StationBikesRepairSensor):
+        return _object_id("cookie", ent._station_id, "rent_bike_repair")
+    if isinstance(ent, StationIdSensor):
+        return _object_id("cookie", ent._station_id, "station_id_status")
+    if isinstance(ent, StationDistanceSensor):
+        return _object_id("cookie", ent._station_id, "distance_m")
     return None
 
 
@@ -150,6 +202,30 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ]
     )
 
+    station_ids = list(getattr(coordinator, "stations_by_id", {}) or {})
+    if station_ids:
+        entities.extend(
+            [
+                NearbyTotalBikesSensor(coordinator, entry),
+                NearbyRecommendedBikesSensor(coordinator, entry),
+                NearbyStationsListSensor(coordinator, entry),
+            ]
+        )
+
+        for sid in station_ids:
+            st = coordinator.stations_by_id.get(sid)
+            station_name = _station_display_name(st, sid)
+            entities.extend(
+                [
+                    StationBikesTotalSensor(coordinator, entry, sid, station_name),
+                    StationBikesGeneralSensor(coordinator, entry, sid, station_name),
+                    StationBikesSproutSensor(coordinator, entry, sid, station_name),
+                    StationBikesRepairSensor(coordinator, entry, sid, station_name),
+                    StationIdSensor(coordinator, entry, sid, station_name),
+                    StationDistanceSensor(coordinator, entry, sid, station_name),
+                ]
+            )
+
     # 초기 즐겨찾기 엔티티 생성
     favs = (coordinator.data or {}).get("favorites") or []
     for f in favs:
@@ -193,6 +269,39 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     # 최초 상태 기준으로 "관리 중인 즐겨찾기" 세트 저장
     coordinator._spb_fav_station_ids = _current_station_ids()  # type: ignore[attr-defined]
 
+    def _current_station_ids_from_status() -> set[str]:
+        stations = getattr(coordinator, "stations_by_id", {}) or {}
+        return {str(sid).strip() for sid in stations.keys() if str(sid).strip()}
+
+    def _station_name_from_status(station_id: str) -> str:
+        station = (getattr(coordinator, "stations_by_id", {}) or {}).get(station_id)
+        return _station_display_name(station, station_id)
+
+    def _uid_station_bikes_total(station_id: str) -> str:
+        return f"{entry.entry_id}_{station_id}_bikes_total"
+
+    def _uid_station_bikes_general(station_id: str) -> str:
+        return f"{entry.entry_id}_{station_id}_bikes_general"
+
+    def _uid_station_bikes_sprout(station_id: str) -> str:
+        return f"{entry.entry_id}_{station_id}_bikes_sprout"
+
+    def _uid_station_bikes_repair(station_id: str) -> str:
+        return f"{entry.entry_id}_{station_id}_bikes_repair"
+
+    def _uid_station_id_status(station_id: str) -> str:
+        return f"{entry.entry_id}_{station_id}_station_id"
+
+    def _uid_station_distance(station_id: str) -> str:
+        return f"{entry.entry_id}_{station_id}_distance_m"
+
+    def _nearby_uids() -> list[str]:
+        return [
+            f"{entry.entry_id}_nearby_total_bikes",
+            f"{entry.entry_id}_nearby_recommended_bikes",
+            f"{entry.entry_id}_nearby_station_list",
+        ]
+
     async def _async_sync_favorites() -> None:
         prev: set[str] = set(getattr(coordinator, "_spb_fav_station_ids", set()))
         curr: set[str] = _current_station_ids()
@@ -220,10 +329,80 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         coordinator._spb_fav_station_ids = curr  # type: ignore[attr-defined]
 
+    async def _async_sync_stations() -> None:
+        prev: set[str] = set(getattr(coordinator, "_spb_station_ids", set()))
+        curr: set[str] = _current_station_ids_from_status()
+
+        added = curr - prev
+        removed = prev - curr
+
+        new_entities: list[SensorEntity] = []
+        if not prev and curr:
+            new_entities.extend(
+                [
+                    NearbyTotalBikesSensor(coordinator, entry),
+                    NearbyRecommendedBikesSensor(coordinator, entry),
+                    NearbyStationsListSensor(coordinator, entry),
+                ]
+            )
+
+        for sid in sorted(added):
+            sname = _station_name_from_status(sid)
+            new_entities.extend(
+                [
+                    StationBikesTotalSensor(coordinator, entry, sid, sname),
+                    StationBikesGeneralSensor(coordinator, entry, sid, sname),
+                    StationBikesSproutSensor(coordinator, entry, sid, sname),
+                    StationBikesRepairSensor(coordinator, entry, sid, sname),
+                    StationIdSensor(coordinator, entry, sid, sname),
+                    StationDistanceSensor(coordinator, entry, sid, sname),
+                ]
+            )
+
+        if new_entities:
+            _register_entity_ids(hass, entry, new_entities)
+            async_add_entities(new_entities)
+
+        if removed:
+            dev_reg = dr.async_get(hass)
+            for sid in sorted(removed):
+                for uid in (
+                    _uid_station_bikes_total(sid),
+                    _uid_station_bikes_general(sid),
+                    _uid_station_bikes_sprout(sid),
+                    _uid_station_bikes_repair(sid),
+                    _uid_station_id_status(sid),
+                    _uid_station_distance(sid),
+                ):
+                    entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+                    if entity_id:
+                        await ent_reg.async_remove(entity_id)
+
+                device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_station_{sid}")})
+                if device:
+                    dev_reg.async_remove_device(device.id)
+
+        if prev and not curr:
+            for uid in _nearby_uids():
+                entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+                if entity_id:
+                    await ent_reg.async_remove(entity_id)
+
+            dev_reg = dr.async_get(hass)
+            device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_stations")})
+            if device:
+                dev_reg.async_remove_device(device.id)
+
+        coordinator._spb_station_ids = curr  # type: ignore[attr-defined]
+
     @callback
     def _on_coordinator_update() -> None:
         # DataUpdateCoordinator listener는 async를 직접 await 못하므로 task로 실행
-        hass.async_create_task(_async_sync_favorites())
+        async def _sync_all() -> None:
+            await _async_sync_favorites()
+            await _async_sync_stations()
+
+        hass.async_create_task(_sync_all())
 
     coordinator.async_add_listener(_on_coordinator_update)
 
@@ -589,3 +768,210 @@ class FavoriteStationIdSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], Sen
     @property
     def native_value(self):
         return self._station_id
+
+
+class _StationControllerSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._controller_id = f"{entry.entry_id}_stations"
+
+    @property
+    def device_info(self):
+        name = _resolve_location_device_name(self.coordinator.hass, self.coordinator.location_entity_id)
+        return {
+            "identifiers": {(DOMAIN, self._controller_id)},
+            "name": name or INTEGRATION_NAME,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL_CONTROLLER,
+        }
+
+
+class NearbyTotalBikesSensor(_StationControllerSensor):
+    _attr_icon = "mdi:bicycle-basket"
+    _attr_native_unit_of_measurement = "대"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_nearby_total_bikes"
+        self._attr_name = "주변 총 대여 가능"
+
+    @property
+    def native_value(self) -> int:
+        return int(getattr(self.coordinator, "nearby_total_bikes", 0) or 0)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "내 위치 엔티티": self.coordinator.location_entity_id,
+            "주변 반경 (m)": self.coordinator.radius_m,
+            "최소 자전거 수": self.coordinator.min_bikes,
+            "중심점 소스": self.coordinator.center_source,
+            "중심 위도": self.coordinator.center_lat,
+            "중심 경도": self.coordinator.center_lon,
+            "상태": self.coordinator.nearby_status,
+        }
+
+
+class NearbyRecommendedBikesSensor(_StationControllerSensor):
+    _attr_icon = "mdi:bicycle-basket"
+    _attr_native_unit_of_measurement = "대"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_nearby_recommended_bikes"
+        self._attr_name = "주변 추천 대여소 대여 가능"
+
+    @property
+    def native_value(self) -> int:
+        return int(getattr(self.coordinator, "nearby_recommended_bikes", 0) or 0)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "추천 목록 개수": len(self.coordinator.nearby),
+            "추천 목록": self.coordinator.nearby,
+            "주변 반경 (m)": self.coordinator.radius_m,
+            "최소 자전거 수": self.coordinator.min_bikes,
+            "상태": self.coordinator.nearby_status,
+        }
+
+
+class NearbyStationsListSensor(_StationControllerSensor):
+    _attr_icon = "mdi:map-marker-radius"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_nearby_station_list"
+        self._attr_name = "주변 대여소 목록"
+
+    @property
+    def native_value(self) -> int:
+        return len(self.coordinator.nearby)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "추천 목록": self.coordinator.nearby,
+            "주변 반경 (m)": self.coordinator.radius_m,
+            "최소 자전거 수": self.coordinator.min_bikes,
+            "상태": self.coordinator.nearby_status,
+        }
+
+
+class _StationSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator)
+        self._entry = entry
+        self._station_id = station_id
+        self._station_name = station_name
+        self._device_id = f"{entry.entry_id}_station_{station_id}"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._station_name,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL_STATION,
+            "via_device": (DOMAIN, f"{self._entry.entry_id}_stations"),
+        }
+
+
+class StationBikesTotalSensor(_StationSensor):
+    _attr_native_unit_of_measurement = "대"
+    _attr_icon = "mdi:bicycle"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator, entry, station_id, station_name)
+        self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_total"
+        self._attr_name = "대여 가능 자전거 (전체)"
+
+    @property
+    def native_value(self) -> int:
+        st = self.coordinator.stations_by_id.get(self._station_id)
+        return int(st.bikes_total) if st else 0
+
+
+class StationBikesGeneralSensor(_StationSensor):
+    _attr_native_unit_of_measurement = "대"
+    _attr_icon = "mdi:bicycle"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator, entry, station_id, station_name)
+        self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_general"
+        self._attr_name = "대여 가능 자전거 (일반)"
+
+    @property
+    def native_value(self) -> int:
+        st = self.coordinator.stations_by_id.get(self._station_id)
+        return int(st.bikes_general) if st else 0
+
+
+class StationBikesSproutSensor(_StationSensor):
+    _attr_native_unit_of_measurement = "대"
+    _attr_icon = "mdi:sprout"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator, entry, station_id, station_name)
+        self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_sprout"
+        self._attr_name = "대여 가능 자전거 (새싹)"
+
+    @property
+    def native_value(self) -> int:
+        st = self.coordinator.stations_by_id.get(self._station_id)
+        return int(st.bikes_sprout) if st else 0
+
+
+class StationBikesRepairSensor(_StationSensor):
+    _attr_native_unit_of_measurement = "대"
+    _attr_icon = "mdi:tools"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator, entry, station_id, station_name)
+        self._attr_unique_id = f"{entry.entry_id}_{station_id}_bikes_repair"
+        self._attr_name = "대여 불가 자전거 (정비)"
+
+    @property
+    def native_value(self) -> int:
+        st = self.coordinator.stations_by_id.get(self._station_id)
+        return int(st.bikes_repair) if st else 0
+
+
+class StationIdSensor(_StationSensor):
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:identifier"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator, entry, station_id, station_name)
+        self._attr_unique_id = f"{entry.entry_id}_{station_id}_station_id"
+        self._attr_name = "정류소 ID"
+
+    @property
+    def native_value(self) -> str:
+        return self._station_id
+
+
+class StationDistanceSensor(_StationSensor):
+    _attr_native_unit_of_measurement = "m"
+    _attr_icon = "mdi:map-marker-distance"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator, entry, station_id, station_name)
+        self._attr_unique_id = f"{entry.entry_id}_{station_id}_distance_m"
+        self._attr_name = "거리"
+
+    @property
+    def native_value(self) -> float | None:
+        st = self.coordinator.stations_by_id.get(self._station_id)
+        if not st or not st.lat or not st.lon:
+            return None
+        if self.coordinator.center_lat is None or self.coordinator.center_lon is None:
+            return None
+        dist = haversine_m(self.coordinator.center_lat, self.coordinator.center_lon, st.lat, st.lon)
+        return round(dist, 1)

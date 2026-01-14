@@ -4,45 +4,27 @@
     "step": {
       "user": {
         "title": "Ddareungi setup",
-        "description": "Choose a collection method. Each method provides different data.\n\n- **API (Open API Polling)**: Real-time station availability + location-based recommended station (requires an Open API key)\n- **Cookie (Web Pulling)**: Your rental/return history + favorite stations status (requires a login cookie / expires)\n\nYou can add this integration multiple times (e.g., set up both methods).",
-        "data": {
-          "mode": "Method"
-        }
-      },
-      "api": {
-        "title": "API method (Open API Polling)",
-        "description": "Enter your Open API key and options.\n\n- **Open API Key**: Request/issue from [Seoul Open Data Plaza (dataset)](https://data.seoul.go.kr/dataList/OA-15493/A/1/datasetView.do)\n- **My location entity (optional)**: Used as the reference point for recommended stations\n- **Update interval (seconds)**: API polling interval (too low may hit rate limits)\n- **Station IDs**: Comma/newline separated (station number or ST code)\n  - Example: `4796`, `ST-2693`\n  - Tip: ST code is the most accurate.\n",
-        "data": {
-          "api_key": "Open API Key",
-          "location_entity": "My location entity (entity_id)",
-          "update_interval_seconds": "Update interval (seconds)",
-          "station_ids": "Station IDs (comma/newline). e.g. 4796, ST-2693"
-        }
-      },
-      "cookie": {
-        "title": "Cookie method (Web Pulling)",
-        "description": "Sign in with your [Ddareungi](https://www.bikeseoul.com) account and enter your username/password.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Cookie (optional)**: Advanced users can paste it directly\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and replace the cookie.",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- **Station IDs**: Comma/newline separated (station number or ST code)\n  - Example: `4796`, `ST-2693`\n- **My location entity (optional)**: Reference point for nearby recommendations\n- **Radius/Max results/Min bikes**: Nearby recommendation rules\n",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
-          "cookie": "Cookie (optional)",
           "use_history_week": "Enable use history (1 week)",
           "use_history_month": "Enable use history (1 month)",
-          "cookie_update_interval_seconds": "Update interval (seconds)"
+          "cookie_update_interval_seconds": "Update interval (seconds)",
+          "station_ids": "Station IDs (comma/newline). e.g. 4796, ST-2693",
+          "location_entity": "My location entity (entity_id)",
+          "radius_m": "Radius (m)",
+          "max_results": "Max recommended stations",
+          "min_bikes": "Minimum bikes"
         }
       }
     },
     "error": {
-      "cookie_required": "Cookie is required.",
-      "login_required": "Enter username/password or a cookie.",
-      "cookie_invalid_format": "Cookie must start with `Cookie:` and include the full header value.",
-      "invalid_cookie": "Invalid cookie. Check the cookie value.",
+      "login_required": "Enter username and password.",
       "invalid_login": "Invalid username or password.",
+      "period_required": "Select at least one period.",
       "cannot_connect": "Cannot connect.",
-      "invalid_auth": "Invalid authentication. Check the API key.",
-      "station_not_found": "Some station IDs are invalid. Please check station numbers or ST codes.",
-      "unknown": "Unknown error.",
-      "period_required": "Select at least one period."
+      "unknown": "Unknown error."
     },
     "abort": {
       "already_configured": "Already configured."
@@ -52,45 +34,27 @@
     "step": {
       "init": {
         "title": "Ddareungi setup",
-        "description": "Choose a collection method. Each method provides different data.\n\n- **API (Open API Polling)**: Real-time station availability + location-based recommended station (requires an Open API key)\n- **Cookie (Web Pulling)**: Your rental/return history + favorite stations status (requires a login cookie / expires)\n\nYou can add this integration multiple times (e.g., set up both methods).",
-        "data": {
-          "mode": "Method"
-        }
-      },
-      "api": {
-        "title": "API method (Open API Polling)",
-        "description": "Enter your Open API key and options.\n\n- **Open API Key**: Request/issue from [Seoul Open Data Plaza (dataset)](https://data.seoul.go.kr/dataList/OA-15493/A/1/datasetView.do)\n- **My location entity (optional)**: Used as the reference point for recommended stations\n- **Update interval (seconds)**: API polling interval (too low may hit rate limits)\n- **Station IDs**: Comma/newline separated (station number or ST code)\n  - Example: `4796`, `ST-2693`\n  - Tip: ST code is the most accurate.\n",
-        "data": {
-          "api_key": "Open API Key",
-          "location_entity": "My location entity (entity_id)",
-          "update_interval_seconds": "Update interval (seconds)",
-          "station_ids": "Station IDs (comma/newline). e.g. 4796, ST-2693"
-        }
-      },
-      "cookie": {
-        "title": "Cookie method (Web Pulling)",
-        "description": "Sign in with your [Ddareungi](https://www.bikeseoul.com) account and enter your username/password.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Cookie (optional)**: Advanced users can paste it directly\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and replace the cookie.",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- **Station IDs**: Comma/newline separated (station number or ST code)\n  - Example: `4796`, `ST-2693`\n- **My location entity (optional)**: Reference point for nearby recommendations\n- **Radius/Max results/Min bikes**: Nearby recommendation rules\n",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
-          "cookie": "Cookie (optional)",
           "use_history_week": "Enable use history (1 week)",
           "use_history_month": "Enable use history (1 month)",
-          "cookie_update_interval_seconds": "Update interval (seconds)"
+          "cookie_update_interval_seconds": "Update interval (seconds)",
+          "station_ids": "Station IDs (comma/newline). e.g. 4796, ST-2693",
+          "location_entity": "My location entity (entity_id)",
+          "radius_m": "Radius (m)",
+          "max_results": "Max recommended stations",
+          "min_bikes": "Minimum bikes"
         }
       }
     },
     "error": {
-      "cookie_required": "Cookie is required.",
-      "login_required": "Enter username/password or a cookie.",
-      "cookie_invalid_format": "Cookie must start with `Cookie:` and include the full header value.",
-      "invalid_cookie": "Invalid cookie. Check the cookie value.",
+      "login_required": "Enter username and password.",
       "invalid_login": "Invalid username or password.",
+      "period_required": "Select at least one period.",
       "cannot_connect": "Cannot connect.",
-      "invalid_auth": "Invalid authentication. Check the API key.",
-      "station_not_found": "Some station IDs are invalid. Please check station numbers or ST codes.",
-      "unknown": "Unknown error.",
-      "period_required": "Select at least one period."
+      "unknown": "Unknown error."
     }
   }
 }
