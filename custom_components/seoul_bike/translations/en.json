@@ -1,28 +1,20 @@
-﻿{
-  "title": "Ddareungi (Seoul Public Bike)",
+{
+  "title": "Seoul Bike Ddareungi (Seoul Public Bike)",
   "config": {
     "step": {
       "user": {
         "title": "Ddareungi setup",
-        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- **Station IDs**: Comma/newline separated (station number or ST code)\n  - Example: `4796`, `ST-2693`\n- **My location entity (optional)**: Reference point for nearby recommendations\n- **Radius/Max results/Min bikes**: Nearby recommendation rules\n",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations\n",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
-          "use_history_week": "Enable use history (1 week)",
-          "use_history_month": "Enable use history (1 month)",
-          "cookie_update_interval_seconds": "Update interval (seconds)",
-          "station_ids": "Station IDs (comma/newline). e.g. 4796, ST-2693",
-          "location_entity": "My location entity (entity_id)",
-          "radius_m": "Radius (m)",
-          "max_results": "Max recommended stations",
-          "min_bikes": "Minimum bikes"
+          "location_entity": "My location entity (entity_id)"
         }
       }
     },
     "error": {
       "login_required": "Enter username and password.",
       "invalid_login": "Invalid username or password.",
-      "period_required": "Select at least one period.",
       "cannot_connect": "Cannot connect.",
       "unknown": "Unknown error."
     },
@@ -34,25 +26,17 @@
     "step": {
       "init": {
         "title": "Ddareungi setup",
-        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in (cookie generated automatically)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- **Station IDs**: Comma/newline separated (station number or ST code)\n  - Example: `4796`, `ST-2693`\n- **My location entity (optional)**: Reference point for nearby recommendations\n- **Radius/Max results/Min bikes**: Nearby recommendation rules\n",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations\n",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
-          "use_history_week": "Enable use history (1 week)",
-          "use_history_month": "Enable use history (1 month)",
-          "cookie_update_interval_seconds": "Update interval (seconds)",
-          "station_ids": "Station IDs (comma/newline). e.g. 4796, ST-2693",
-          "location_entity": "My location entity (entity_id)",
-          "radius_m": "Radius (m)",
-          "max_results": "Max recommended stations",
-          "min_bikes": "Minimum bikes"
+          "location_entity": "My location entity (entity_id)"
         }
       }
     },
     "error": {
       "login_required": "Enter username and password.",
       "invalid_login": "Invalid username or password.",
-      "period_required": "Select at least one period.",
       "cannot_connect": "Cannot connect.",
       "unknown": "Unknown error."
     }

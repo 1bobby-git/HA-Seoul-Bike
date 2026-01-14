@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import calendar
 import logging
 import re
 from dataclasses import dataclass
-from datetime import timedelta, datetime
+from datetime import date, timedelta, datetime
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
 from html import unescape
@@ -409,6 +410,25 @@ def _parse_use_history(html: str) -> dict[str, Any]:
     }
 
 
+def _subtract_months(target: date, months: int) -> date:
+    year = target.year
+    month = target.month - months
+    while month <= 0:
+        year -= 1
+        month += 12
+    day = min(target.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def _history_range(period_key: str) -> tuple[str, str]:
+    today = datetime.now().date()
+    if period_key == "1w":
+        start = today - timedelta(days=7)
+    else:
+        start = _subtract_months(today, 1)
+    return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
+
+
 def _fallback_station(
     prev: dict[str, Station],
     station_id: str | None,
@@ -531,12 +551,23 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         lon = _to_float(status.get("stationLongitude")) or 0.0
 
         bikes_total = _to_int(status.get("parkingBikeTotCnt"))
-        bikes_general = _to_int(status.get("parkingBikeTotCntGeneral"), bikes_total)
+        bikes_general = _to_int(status.get("parkingBikeTotCntGeneral"), 0)
         bikes_sprout = _to_int(status.get("parkingBikeTotCntTeen"), 0)
+        bikes_qr = _to_int(status.get("parkingQRBikeCnt"), 0)
+        bikes_elec = _to_int(status.get("parkingELECBikeCnt"), 0)
         bikes_repair = _to_int(status.get("parkingBikeTotCntRepair"), 0)
+
+        if bikes_general <= 0:
+            bikes_general = _to_int(status.get("parkingBikeTotCnt"), 0)
+        if bikes_qr > 0:
+            bikes_general += bikes_qr
+        if bikes_sprout <= 0 and bikes_elec > 0:
+            bikes_sprout = bikes_elec
 
         if bikes_total <= 0:
             bikes_total = _to_int(status.get("bikes_total"))
+        if bikes_total <= 0:
+            bikes_total = max(0, bikes_general + bikes_sprout)
         if bikes_general <= 0:
             bikes_general = _to_int(status.get("bikes_general"), bikes_total)
         if bikes_sprout <= 0:
@@ -617,6 +648,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             station_raw = opts.get(CONF_STATION_IDS, self.entry.data.get(CONF_STATION_IDS, []))
             self.station_ids = _parse_station_list(station_raw)
+            has_station_ids = bool(self.station_ids)
 
             self.location_entity_id = str(
                 opts.get(CONF_LOCATION_ENTITY, self.entry.data.get(CONF_LOCATION_ENTITY, "")) or ""
@@ -731,15 +763,21 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updated_at = datetime.now().isoformat()
             periods: dict[str, Any] = {}
             if "1w" in period_html:
-                periods["1w"] = {
-                    **_parse_use_history(period_html["1w"]),
-                    "updated_at": updated_at,
-                }
+                payload = _parse_use_history(period_html["1w"])
+                if not payload.get("period_start") or not payload.get("period_end"):
+                    start, end = _history_range("1w")
+                    payload["period_start"] = start
+                    payload["period_end"] = end
+                payload["updated_at"] = updated_at
+                periods["1w"] = payload
             if "1m" in period_html:
-                periods["1m"] = {
-                    **_parse_use_history(period_html["1m"]),
-                    "updated_at": updated_at,
-                }
+                payload = _parse_use_history(period_html["1m"])
+                if not payload.get("period_start") or not payload.get("period_end"):
+                    start, end = _history_range("1m")
+                    payload["period_start"] = start
+                    payload["period_end"] = end
+                payload["updated_at"] = updated_at
+                periods["1m"] = payload
 
             for pdata in periods.values():
                 hist = pdata.get("history") or []
@@ -762,15 +800,42 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             fav_html = await self._api.fetch_favorites_html()
             favorites = [] if _looks_like_login(fav_html) else _extract_favorites_with_counts(fav_html)
 
+            realtime_list: list[dict[str, Any]] = []
+            realtime_by_id: dict[str, dict[str, Any]] = {}
+            realtime_by_no: dict[str, dict[str, Any]] = {}
+            if self.station_ids or favorites:
+                try:
+                    realtime_list = await self._api.fetch_station_realtime_all()
+                except Exception as err:
+                    _LOGGER.debug("Station realtime list fetch failed: %s", err)
+                    realtime_list = []
+
+            for item in realtime_list:
+                sid = str(item.get("stationId") or "").strip().upper()
+                if sid:
+                    realtime_by_id[sid] = item
+                station_no = str(item.get("stationNo") or "").strip()
+                if station_no:
+                    realtime_by_no[station_no] = item
+
             favorite_status: dict[str, Any] = {}
             for f in favorites:
                 sid = f.get("station_id") or ""
+                sno = f.get("station_no") or ""
+                normal = f.get("normal")
+                sprout = f.get("sprout")
+                status = realtime_by_id.get(str(sid).upper()) or (realtime_by_no.get(str(sno)) if sno else None)
+                if status:
+                    st = self._station_from_status(status, str(sid), str(sno), f.get("station_name"))
+                    if st:
+                        normal = st.bikes_general
+                        sprout = st.bikes_sprout
                 favorite_status[sid] = {
                     "station_id": sid,
                     "station_name": f.get("station_name"),
                     "station_no": f.get("station_no"),
-                    "normal": f.get("normal"),
-                    "sprout": f.get("sprout"),
+                    "normal": normal,
+                    "sprout": sprout,
                 }
 
             prev_stations = dict(self.stations_by_id)
@@ -782,20 +847,23 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         continue
                     station_id = raw_id.upper() if raw_id.upper().startswith("ST-") else None
                     station_no = raw_id if raw_id.isdigit() else None
-                    try:
-                        status = await self._api.fetch_station_status(station_id, station_no)
-                    except Exception as err:
-                        _LOGGER.debug("Station status fetch failed (%s): %s", raw_id, err)
-                        status = {}
-                    st = self._station_from_status(status, station_id, station_no, raw_id)
-                    if st:
-                        stations_by_id[st.station_id] = st
-                        continue
+                    status = None
+                    if station_id:
+                        status = realtime_by_id.get(station_id)
+                    if not status and station_no:
+                        status = realtime_by_no.get(station_no)
+                    if status:
+                        st = self._station_from_status(status, station_id, station_no, raw_id)
+                        if st:
+                            stations_by_id[st.station_id] = st
+                            continue
                     fallback = _fallback_station(prev_stations, station_id, station_no, raw_id)
                     if fallback:
                         stations_by_id[fallback.station_id] = fallback
 
-            if stations_by_id or not prev_stations:
+            if not has_station_ids:
+                self.stations_by_id = {}
+            elif stations_by_id or not prev_stations:
                 self.stations_by_id = stations_by_id
             else:
                 self.stations_by_id = prev_stations

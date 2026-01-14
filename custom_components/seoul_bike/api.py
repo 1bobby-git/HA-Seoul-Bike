@@ -2,31 +2,16 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import logging
 import re
-from datetime import datetime, timedelta
-from html.parser import HTMLParser
+from datetime import date, datetime, timedelta
 from typing import Any
-from urllib.parse import urlencode
 
 import aiohttp
 
 _LOGGER = logging.getLogger(__name__)
-
-
-class _AnchorFinder(HTMLParser):
-    def __init__(self, target_id: str) -> None:
-        super().__init__()
-        self._target_id = target_id
-        self.attrs: dict[str, str] = {}
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag != "a":
-            return
-        attr_map = {k: (v or "") for k, v in attrs}
-        if attr_map.get("id") == self._target_id:
-            self.attrs = attr_map
 
 
 def _normalize_cookie(raw: str) -> str:
@@ -297,189 +282,43 @@ class SeoulPublicBikeSiteApi:
             return f"{self.BASE}{href}"
         return f"{self.BASE}/{href.lstrip('./')}"
 
-    def _extract_period_href(self, html: str, button_id: str) -> str | None:
-        if not html:
-            return None
-        parser = _AnchorFinder(button_id)
-        parser.feed(html)
-        attrs = parser.attrs or {}
-        href = attrs.get("href") or attrs.get("data-href") or attrs.get("data-url")
-        if href:
-            href = href.strip()
-            if href and href != "#" and not href.lower().startswith("javascript"):
-                return href
+    def _format_date(self, target: date) -> str:
+        return target.strftime("%Y-%m-%d")
 
-        onclick = attrs.get("onclick", "")
-        if onclick:
-            m = re.search(r"(?:location\.href|window\.location|location)\s*=\s*['\"]([^'\"]+)['\"]", onclick)
-            if m:
-                return m.group(1).strip()
-            m = re.search(r"(/app/mybike/getMemberUseHistory\.do[^'\"]*)", onclick, re.IGNORECASE)
-            if m:
-                return m.group(1).strip()
+    def _subtract_months(self, target: date, months: int) -> date:
+        year = target.year
+        month = target.month - months
+        while month <= 0:
+            year -= 1
+            month += 12
+        day = min(target.day, calendar.monthrange(year, month)[1])
+        return date(year, month, day)
 
-        return None
-
-    def _find_period_attrs(self, html: str, button_id: str) -> dict[str, str]:
-        if not html:
-            return {}
-        parser = _AnchorFinder(button_id)
-        parser.feed(html)
-        return parser.attrs or {}
-
-    def _extract_form(self, html: str) -> tuple[str, dict[str, str], str] | None:
-        if not html:
-            return None
-        m = re.search(
-            r"<form[^>]*\bid=['\"]searchFrm['\"][^>]*>(.*?)</form>",
-            html,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        if not m:
-            m = re.search(r"<form[^>]*>(.*?)</form>", html, flags=re.DOTALL | re.IGNORECASE)
-            if not m:
-                return None
-        form_html = m.group(0)
-        action_m = re.search(r'action=["\']([^"\']+)["\']', form_html, flags=re.IGNORECASE)
-        action = action_m.group(1).strip() if action_m else "/app/mybike/getMemberUseHistory.do"
-        method_m = re.search(r'method=["\']([^"\']+)["\']', form_html, flags=re.IGNORECASE)
-        method = (method_m.group(1).strip() if method_m else "post").lower()
-
-        inputs: dict[str, str] = {}
-        for im in re.finditer(r"<input[^>]*>", form_html, flags=re.IGNORECASE):
-            tag = im.group(0)
-            name_m = re.search(r'name=["\']([^"\']+)["\']', tag, flags=re.IGNORECASE)
-            if not name_m:
-                continue
-            name = name_m.group(1).strip()
-            value_m = re.search(r'value=["\']([^"\']*)["\']', tag, flags=re.IGNORECASE)
-            value = value_m.group(1) if value_m else ""
-            inputs[name] = value
-
-        return action, inputs, method
-
-    def _extract_action_urls(self, html: str) -> list[str]:
-        if not html:
-            return []
-        urls: list[str] = []
-        for m in re.finditer(r"/app/mybike/getMemberUseHistory[^\"'\\s<>]*", html, flags=re.IGNORECASE):
-            url = (m.group(0) or "").strip()
-            if url and url not in urls:
-                urls.append(url)
-        return urls
-
-    def _looks_like_use_history(self, html: str) -> bool:
-        if not html:
-            return False
-        if re.search(r"(payment_box|paymentBox|kcal_box|kcalBox)", html, re.IGNORECASE):
-            return True
-        return bool(re.search(r"(getMemberUseHistory|searchStartDate|searchEndDate)", html, re.IGNORECASE))
-
-    def _extract_days_from_onclick(self, onclick: str) -> int | None:
-        if not onclick:
-            return None
-        lower = onclick.lower()
-        if "week" in lower or "1w" in lower:
-            return 7
-        if "onem" in lower or "month" in lower or "1m" in lower:
-            return 30
-        if re.search(r"['\"]w['\"]", lower):
-            return 7
-        if re.search(r"['\"]m['\"]", lower):
-            return 30
-        m = re.search(r"(\d+)", onclick)
-        if not m:
-            return None
-        try:
-            return int(m.group(1))
-        except Exception:
-            return None
-
-    def _apply_period_to_inputs(self, inputs: dict[str, str], days: int) -> dict[str, str]:
+    def _history_date_range(self, period: str) -> tuple[str, str]:
         today = datetime.now().date()
-        start = today - timedelta(days=days)
-        start_str = start.strftime("%Y-%m-%d")
-        end_str = today.strftime("%Y-%m-%d")
-
-        date_like: list[str] = []
-        date_value_re = re.compile(r"20\d{2}[-./]\d{1,2}[-./]\d{1,2}")
-
-        for name in list(inputs.keys()):
-            lname = name.lower()
-            if date_value_re.search(inputs.get(name, "")):
-                date_like.append(name)
-            if "start" in lname or "from" in lname or "sdate" in lname:
-                inputs[name] = start_str
-            elif "end" in lname or "to" in lname or "edate" in lname:
-                inputs[name] = end_str
-            elif "day" in lname or "period" in lname or "term" in lname:
-                inputs[name] = str(days)
-
-        if date_like:
-            date_like = sorted(date_like)
-            if len(date_like) >= 1:
-                inputs[date_like[0]] = start_str
-            if len(date_like) >= 2:
-                inputs[date_like[1]] = end_str
-        return inputs
+        if period == "1w":
+            start = today - timedelta(days=7)
+        else:
+            start = self._subtract_months(today, 1)
+        return self._format_date(start), self._format_date(today)
 
     async def fetch_use_history_html(self, period: str | None = None, base_html: str | None = None) -> str:
         path = "/app/mybike/getMemberUseHistory.do"
-        html = base_html or await self._get_text(path, referer_path=path)
         if not period:
-            return html
+            return base_html or await self._get_text(path, referer_path=path)
 
-        button_id = "oneMBtn" if period == "1m" else "weekBtn" if period == "1w" else ""
-        if not button_id:
-            return html
-
-        href = self._extract_period_href(html, button_id)
-        if not href:
-            attrs = self._find_period_attrs(html, button_id)
-            action = attrs.get("onclick") or attrs.get("href") or ""
-            days = self._extract_days_from_onclick(action)
-            if not days:
-                days = 7 if button_id == "weekBtn" else 30 if button_id == "oneMBtn" else None
-            form = self._extract_form(html)
-            if days and form:
-                action, inputs, method = form
-                inputs = self._apply_period_to_inputs(inputs, days)
-                try:
-                    if method == "get":
-                        qs = urlencode(inputs)
-                        url = self._absolute_url(action)
-                        url = f"{url}?{qs}" if qs else url
-                        action_html = await self._get_text_url(url, referer_path=path)
-                    else:
-                        action_html = await self._post_text(action, inputs, referer_path=path)
-                    if self._looks_like_use_history(action_html):
-                        return action_html
-                    for alt in self._extract_action_urls(html):
-                        if alt == action:
-                            continue
-                        try:
-                            alt_html = await self._post_text(alt, inputs, referer_path=path)
-                            if self._looks_like_use_history(alt_html):
-                                return alt_html
-                        except Exception:
-                            try:
-                                qs = urlencode(inputs)
-                                url = self._absolute_url(alt)
-                                url = f"{url}?{qs}" if qs else url
-                                alt_html = await self._get_text_url(url, referer_path=path)
-                                if self._looks_like_use_history(alt_html):
-                                    return alt_html
-                            except Exception:
-                                continue
-                    return await self._get_text(path, referer_path=path)
-                except Exception:
-                    return html
-            return html
-
-        action_html = await self._get_text_url(self._absolute_url(href), referer_path=path)
-        if self._looks_like_use_history(action_html):
-            return action_html
-        return await self._get_text(path, referer_path=path)
+        start_date, end_date = self._history_date_range(period)
+        payload = {
+            "searchStartDate": start_date,
+            "searchEndDate": end_date,
+            "currentPageNo": "1",
+            "rentHistSeq": "",
+            "rentDttm": "",
+        }
+        try:
+            return await self._post_text(path, payload, referer_path=path)
+        except Exception:
+            return base_html or await self._get_text(path, referer_path=path)
 
     async def fetch_rent_status(self) -> dict[str, Any]:
         last_exc: Exception | None = None
@@ -639,3 +478,15 @@ class SeoulPublicBikeSiteApi:
         html = await self.fetch_station_realtime_html(station_id, station_no)
         parsed = self._extract_station_status_html(html)
         return parsed or data
+
+    async def fetch_station_realtime_all(self) -> list[dict[str, Any]]:
+        data = await self._post_json(
+            "/app/station/getStationRealtimeStatus.do",
+            data={"stationGrpSeq": "ALL"},
+            referer_path="/app/station/getStationRealtimeStatus.do",
+        )
+        if isinstance(data, dict):
+            items = data.get("realtimeList") or data.get("list") or data.get("data")
+            if isinstance(items, list):
+                return [item for item in items if isinstance(item, dict)]
+        return []
