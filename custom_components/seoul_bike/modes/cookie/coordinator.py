@@ -18,8 +18,10 @@ from homeassistant.util import dt as dt_util
 from .api import SeoulPublicBikeSiteApi
 from .const import (
     CONF_COOKIE,
+    CONF_COOKIE_UPDATE_INTERVAL,
     CONF_USE_HISTORY_WEEK,
     CONF_USE_HISTORY_MONTH,
+    DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS,
     DEFAULT_USE_HISTORY_WEEK,
     DEFAULT_USE_HISTORY_MONTH,
     DOMAIN,
@@ -350,11 +352,20 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.last_request_url: str | None = None
         self.validation_status: str | None = None
 
+        try:
+            update_interval_s = int(
+                entry.options.get(CONF_COOKIE_UPDATE_INTERVAL)
+                or entry.data.get(CONF_COOKIE_UPDATE_INTERVAL)
+                or DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
+            )
+        except Exception:
+            update_interval_s = DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
+
         super().__init__(
             hass,
             logger=_LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
-            update_interval=timedelta(seconds=DEFAULT_SCAN_INTERVAL_S),
+            update_interval=timedelta(seconds=update_interval_s),
         )
 
     def _sync_last_request_meta(self) -> None:

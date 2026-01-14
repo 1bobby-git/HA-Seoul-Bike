@@ -25,8 +25,10 @@ from .modes.cookie.const import (
     CONF_COOKIE,
     CONF_USE_HISTORY_WEEK,
     CONF_USE_HISTORY_MONTH,
+    CONF_COOKIE_UPDATE_INTERVAL,
     DEFAULT_USE_HISTORY_WEEK,
     DEFAULT_USE_HISTORY_MONTH,
+    DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS,
 )
 from .modes.cookie.api import SeoulPublicBikeSiteApi
 
@@ -343,6 +345,12 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             cookie_line = _normalize_cookie_input(cookie)
             use_week = bool(user_input.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
             use_month = bool(user_input.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
+            try:
+                update_interval = int(
+                    user_input.get(CONF_COOKIE_UPDATE_INTERVAL, DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS)
+                )
+            except Exception:
+                update_interval = DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
             if not cookie:
                 errors["base"] = "cookie_required"
             elif not cookie_line:
@@ -366,6 +374,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             CONF_COOKIE: cookie_line,
                             CONF_USE_HISTORY_WEEK: use_week,
                             CONF_USE_HISTORY_MONTH: use_month,
+                            CONF_COOKIE_UPDATE_INTERVAL: update_interval,
                         },
                     )
 
@@ -374,6 +383,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_COOKIE): str,
                 vol.Optional(CONF_USE_HISTORY_WEEK, default=DEFAULT_USE_HISTORY_WEEK): bool,
                 vol.Optional(CONF_USE_HISTORY_MONTH, default=DEFAULT_USE_HISTORY_MONTH): bool,
+                vol.Optional(
+                    CONF_COOKIE_UPDATE_INTERVAL,
+                    default=int(DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS),
+                ): int,
             }
         )
         return self.async_show_form(step_id="cookie", data_schema=schema, errors=errors)
@@ -479,6 +492,12 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             cookie_line = _normalize_cookie_input(cookie)
             use_week = bool(user_input.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
             use_month = bool(user_input.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
+            try:
+                update_interval = int(
+                    user_input.get(CONF_COOKIE_UPDATE_INTERVAL, DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS)
+                )
+            except Exception:
+                update_interval = DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
             if not cookie:
                 errors["base"] = "cookie_required"
             elif not cookie_line:
@@ -498,6 +517,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     new_data = dict(data)
                     new_data[CONF_MODE] = MODE_COOKIE
                     new_data[CONF_COOKIE] = cookie_line
+                    new_data[CONF_COOKIE_UPDATE_INTERVAL] = update_interval
                     new_data.pop(CONF_API_KEY, None)
                     new_data.pop(CONF_STATION_IDS, None)
                     new_data.pop(CONF_LOCATION_ENTITY, None)
@@ -515,6 +535,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                             CONF_COOKIE: cookie_line,
                             CONF_USE_HISTORY_WEEK: use_week,
                             CONF_USE_HISTORY_MONTH: use_month,
+                            CONF_COOKIE_UPDATE_INTERVAL: update_interval,
                         },
                     )
 
@@ -529,6 +550,15 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     CONF_USE_HISTORY_MONTH,
                     default=bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH)),
                 ): bool,
+                vol.Optional(
+                    CONF_COOKIE_UPDATE_INTERVAL,
+                    default=int(
+                        opts.get(
+                            CONF_COOKIE_UPDATE_INTERVAL,
+                            data.get(CONF_COOKIE_UPDATE_INTERVAL, DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS),
+                        )
+                    ),
+                ): int,
             }
         )
         return self.async_show_form(step_id="cookie", data_schema=schema, errors=errors)

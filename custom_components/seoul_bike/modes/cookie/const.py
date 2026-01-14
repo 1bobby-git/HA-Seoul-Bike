@@ -5,8 +5,10 @@ DOMAIN = "seoul_bike"
 CONF_COOKIE = "cookie"
 CONF_USE_HISTORY_WEEK = "use_history_week"
 CONF_USE_HISTORY_MONTH = "use_history_month"
+CONF_COOKIE_UPDATE_INTERVAL = "cookie_update_interval_seconds"
 DEFAULT_USE_HISTORY_WEEK = True
 DEFAULT_USE_HISTORY_MONTH = True
+DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS = 120
 
 MANUFACTURER = "@1bobby-git"
 MODEL_USE_HISTORY = "대여 반납 이력"

@@ -21,11 +21,12 @@
       },
       "cookie": {
         "title": "Cookie method (Web Pulling)",
-        "description": "Paste a cookie from a browser logged into [Ddareungi](https://www.bikeseoul.com).\n\n- **Cookie**: In DevTools Network tab, select a `bikeseoul.com` request and copy the entire `Cookie` value from Request Headers (not just JSESSIONID)\n- If updates stop, the session likely expired. Log in again and paste a new cookie.",
+        "description": "Paste a cookie from a browser logged into [Ddareungi](https://www.bikeseoul.com).\n\n- **Cookie**: In DevTools Network tab, select a `bikeseoul.com` request and copy the entire `Cookie` value from Request Headers (not just JSESSIONID)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and paste a new cookie.",
         "data": {
           "cookie": "Cookie",
           "use_history_week": "Enable use history (1 week)",
-          "use_history_month": "Enable use history (1 month)"
+          "use_history_month": "Enable use history (1 month)",
+          "cookie_update_interval_seconds": "Update interval (seconds)"
         }
       }
     },
@@ -64,11 +65,12 @@
       },
       "cookie": {
         "title": "Cookie method (Web Pulling)",
-        "description": "Paste a cookie from a browser logged into [Ddareungi](https://www.bikeseoul.com).\n\n- **Cookie**: In DevTools Network tab, select a `bikeseoul.com` request and copy the entire `Cookie` value from Request Headers (not just JSESSIONID)\n- If updates stop, the session likely expired. Log in again and paste a new cookie.",
+        "description": "Paste a cookie from a browser logged into [Ddareungi](https://www.bikeseoul.com).\n\n- **Cookie**: In DevTools Network tab, select a `bikeseoul.com` request and copy the entire `Cookie` value from Request Headers (not just JSESSIONID)\n- **Update interval (seconds)**: 120 seconds recommended (too frequent polling may overload the server)\n- If updates stop, the session likely expired. Log in again and paste a new cookie.",
         "data": {
           "cookie": "Cookie",
           "use_history_week": "Enable use history (1 week)",
-          "use_history_month": "Enable use history (1 month)"
+          "use_history_month": "Enable use history (1 month)",
+          "cookie_update_interval_seconds": "Update interval (seconds)"
         }
       }
     },

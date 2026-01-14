@@ -21,9 +21,12 @@
       },
       "cookie": {
         "title": "Cookie 방식 (Web Pulling)",
-        "description": "[따릉이](https://www.bikeseoul.com)에 로그인한 브라우저에서 쿠키를 복사해 붙여넣으세요.\n\n- **쿠키**: 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청을 선택 → Request Headers의 `Cookie` 전체 값을 복사해 붙여넣기 (JSESSIONID만 복사하면 안 됩니다)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
+        "description": "[따릉이](https://www.bikeseoul.com)에 로그인한 브라우저에서 쿠키를 복사해 붙여넣으세요.\n\n- **쿠키**: 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청을 선택 → Request Headers의 `Cookie` 전체 값을 복사해 붙여넣기 (JSESSIONID만 복사하면 안 됩니다)\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 짧으면 서버에 과부하를 줄 수 있음)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
         "data": {
-          "cookie": "쿠키"
+          "cookie": "쿠키",
+          "use_history_week": "이용 내역 활성화 (1주일)",
+          "use_history_month": "이용 내역 활성화 (1개월)",
+          "cookie_update_interval_seconds": "업데이트 주기 (초)"
         }
       }
     },
@@ -61,11 +64,12 @@
       },
       "cookie": {
         "title": "Cookie 방식 (Web Pulling)",
-        "description": "[따릉이](https://www.bikeseoul.com)에 로그인한 브라우저에서 쿠키를 복사해 붙여넣으세요.\n\n- **쿠키**: 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청을 선택 → Request Headers의 `Cookie` 전체 값을 복사해 붙여넣기 (JSESSIONID만 복사하면 안 됩니다)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
+        "description": "[따릉이](https://www.bikeseoul.com)에 로그인한 브라우저에서 쿠키를 복사해 붙여넣으세요.\n\n- **쿠키**: 크롬/파이어폭스 개발자 도구의 Network 탭에서 `bikeseoul.com` 요청을 선택 → Request Headers의 `Cookie` 전체 값을 복사해 붙여넣기 (JSESSIONID만 복사하면 안 됩니다)\n- **업데이트 주기 (초)**: 기본 120초 권장 (너무 짧으면 서버에 과부하를 줄 수 있음)\n- 갱신이 멈추면 로그인 세션 만료일 수 있으니, 다시 로그인 후 새 쿠키로 교체하세요.",
         "data": {
           "cookie": "쿠키",
           "use_history_week": "이용 내역 활성화 (1주일)",
-          "use_history_month": "이용 내역 활성화 (1개월)"
+          "use_history_month": "이용 내역 활성화 (1개월)",
+          "cookie_update_interval_seconds": "업데이트 주기 (초)"
         }
       }
     },
