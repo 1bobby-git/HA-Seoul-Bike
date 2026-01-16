@@ -346,6 +346,13 @@ class SeoulPublicBikeSiteApi:
             referer_path="/app/mybike/getMemberUseHistory.do",
         )
 
+    async def fetch_voucher_info(self) -> dict[str, Any]:
+        return await self._post_json(
+            "/app/mybike/coupon/validChkVoucherAjax.do",
+            data={},
+            referer_path="/app/mybike/coupon/validChkVoucher.do",
+        )
+
     async def fetch_coupon_validation(self, coupon_no: str | None) -> dict[str, Any]:
         if not coupon_no:
             return {}

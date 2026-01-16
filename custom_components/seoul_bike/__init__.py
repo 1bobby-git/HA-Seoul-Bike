@@ -12,14 +12,11 @@ from homeassistant.helpers.update_coordinator import UpdateFailed
 
 from .const import (
     DOMAIN,
-    DEVICE_NAME_USE_HISTORY_WEEK,
-    DEVICE_NAME_USE_HISTORY_MONTH,
+    DEVICE_NAME_USE_HISTORY,
+    DEVICE_NAME_MY_PAGE,
     MANUFACTURER,
     MODEL_USE_HISTORY,
-    CONF_USE_HISTORY_WEEK,
-    CONF_USE_HISTORY_MONTH,
-    DEFAULT_USE_HISTORY_WEEK,
-    DEFAULT_USE_HISTORY_MONTH,
+    MODEL_MY_PAGE,
     CONF_COOKIE_USERNAME,
 )
 from .coordinator import SeoulPublicBikeCoordinator
@@ -56,7 +53,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    _cleanup_disabled_period_entities(hass, entry)
+    _cleanup_legacy_use_history_devices(hass, entry)
     _update_device_registry(hass, entry)
     return True
 
@@ -68,32 +65,25 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return unload_ok
 
 
-def _read_enabled_periods(entry: ConfigEntry) -> tuple[bool, bool]:
-    opts = entry.options or {}
-    use_week = bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
-    use_month = bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
-    if not (use_week or use_month):
-        use_month = True
-    return use_week, use_month
-
-
 def _update_device_registry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     dev_reg = dr.async_get(hass)
-    use_week, use_month = _read_enabled_periods(entry)
-    devices = []
-    if use_week:
-        devices.append((f"{entry.entry_id}_use_history_week", DEVICE_NAME_USE_HISTORY_WEEK))
-    if use_month:
-        devices.append((f"{entry.entry_id}_use_history_month", DEVICE_NAME_USE_HISTORY_MONTH))
-    for device_id, name in devices:
-        device = dev_reg.async_get_device(identifiers={(DOMAIN, device_id)})
-        if device:
-            dev_reg.async_update_device(
-                device.id,
-                name=name,
-                model=MODEL_USE_HISTORY,
-                manufacturer=MANUFACTURER,
-            )
+    device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_use_history")})
+    if device:
+        dev_reg.async_update_device(
+            device.id,
+            name=DEVICE_NAME_USE_HISTORY,
+            model=MODEL_USE_HISTORY,
+            manufacturer=MANUFACTURER,
+        )
+
+    my_page_device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_my_page")})
+    if my_page_device:
+        dev_reg.async_update_device(
+            my_page_device.id,
+            name=DEVICE_NAME_MY_PAGE,
+            model=MODEL_MY_PAGE,
+            manufacturer=MANUFACTURER,
+        )
 
     username = str(entry.data.get(CONF_COOKIE_USERNAME) or "").strip()
     controller_device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_stations")})
@@ -104,20 +94,11 @@ def _update_device_registry(hass: HomeAssistant, entry: ConfigEntry) -> None:
         )
 
 
-def _cleanup_disabled_period_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    use_week, use_month = _read_enabled_periods(entry)
-    disabled: list[str] = []
-    if not use_week:
-        disabled.append(f"{entry.entry_id}_use_history_week")
-    if not use_month:
-        disabled.append(f"{entry.entry_id}_use_history_month")
-    if not disabled:
-        return
-
+def _cleanup_legacy_use_history_devices(hass: HomeAssistant, entry: ConfigEntry) -> None:
     ent_reg = er.async_get(hass)
     dev_reg = dr.async_get(hass)
 
-    for device_id in disabled:
+    for device_id in (f"{entry.entry_id}_use_history_week", f"{entry.entry_id}_use_history_month"):
         device = dev_reg.async_get_device(identifiers={(DOMAIN, device_id)})
         if not device:
             continue
