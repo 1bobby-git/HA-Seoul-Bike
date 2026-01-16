@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from typing import Any
+import re
 
 from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
 from homeassistant.config_entries import ConfigEntry
@@ -23,13 +24,10 @@ from .const import (
     MODEL_FAVORITE_STATION,
     MODEL_STATION,
     MODEL_CONTROLLER,
+    MODEL_MY_PAGE,
     FAVORITE_DEVICE_PREFIX,
-    DEVICE_NAME_USE_HISTORY_WEEK,
-    DEVICE_NAME_USE_HISTORY_MONTH,
-    CONF_USE_HISTORY_WEEK,
-    CONF_USE_HISTORY_MONTH,
-    DEFAULT_USE_HISTORY_WEEK,
-    DEFAULT_USE_HISTORY_MONTH,
+    DEVICE_NAME_USE_HISTORY,
+    DEVICE_NAME_MY_PAGE,
     CONF_COOKIE_USERNAME,
 )
 from .coordinator import SeoulPublicBikeCoordinator, haversine_m
@@ -71,6 +69,33 @@ def _station_display_name(station: Any | None, fallback: str) -> str:
     return title or station_no or fallback
 
 
+def _coords_from_entity(hass: HomeAssistant, entity_id: str) -> tuple[float, float] | None:
+    ent_id = (entity_id or "").strip()
+    if not ent_id:
+        return None
+    state = hass.states.get(ent_id)
+    if not state:
+        return None
+    lat = state.attributes.get("latitude")
+    lon = state.attributes.get("longitude")
+    if lat is not None and lon is not None:
+        try:
+            return float(lat), float(lon)
+        except Exception:
+            return None
+    m = re.search(r"^\s*(-?\d+(?:\.\d+)?)\s*[,/ ]\s*(-?\d+(?:\.\d+)?)\s*$", str(state.state))
+    if not m:
+        return None
+    try:
+        return float(m.group(1)), float(m.group(2))
+    except Exception:
+        return None
+
+
+def _distance_enabled(hass: HomeAssistant, coordinator: SeoulPublicBikeCoordinator) -> bool:
+    return _coords_from_entity(hass, coordinator.location_entity_id or "") is not None
+
+
 def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | None, object_id: str, domain: str) -> None:
     if not unique_id or not object_id:
         return
@@ -85,7 +110,11 @@ def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | 
 
 
 def _period_identifier(period_key: str) -> str:
-    return "week" if period_key == "1w" else "month"
+    if period_key == "1w":
+        return "week"
+    if period_key == "1m":
+        return "month"
+    return "history"
 
 
 def _object_id_for_entity(ent: SensorEntity) -> str | None:
@@ -108,23 +137,21 @@ def _object_id_for_entity(ent: SensorEntity) -> str | None:
             "return_datetime": "last_return_datetime",
         }
         return _object_id("cookie", _period_identifier(ent._period_key), name_map.get(ent._key, "last_bike"))
-    if isinstance(ent, TicketExpirySensor):
-        return _object_id("cookie", _period_identifier(ent._period_key), "ticket_expiry")
-    if isinstance(ent, LastUpdateTimeSensor):
-        return _object_id("cookie", _period_identifier(ent._period_key), "last_update_time")
-    if isinstance(ent, UseHistoryPeriodSensor):
-        return _object_id("cookie", _period_identifier(ent._period_key), "period_range")
+    if isinstance(ent, MyPageTicketExpirySensor):
+        return _object_id("cookie", "my_page", "ticket_expiry")
+    if isinstance(ent, MyPageLastUpdateTimeSensor):
+        return _object_id("cookie", "my_page", "last_update_time")
     if isinstance(ent, CookieLastHttpStatusSensor):
-        ident = "week" if ent._device_id.endswith("use_history_week") else "month"
-        return _object_id("cookie", ident, "last_http_status")
+        return _object_id("cookie", "my_page", "last_http_status")
     if isinstance(ent, CookieLastErrorSensor):
-        ident = "week" if ent._device_id.endswith("use_history_week") else "month"
-        return _object_id("cookie", ident, "last_error")
+        return _object_id("cookie", "my_page", "last_error")
     if isinstance(ent, FavoriteStationBikeCountSensor):
         name = "rent_bike_normal" if ent._kind == "normal" else "rent_bike_sprout"
         return _object_id("cookie", ent._station_id, name)
     if isinstance(ent, FavoriteStationIdSensor):
         return _object_id("cookie", ent._station_id, "station_id")
+    if isinstance(ent, FavoriteStationDistanceSensor):
+        return _object_id("cookie", ent._station_id, "favorite_distance_m")
     if isinstance(ent, NearbyTotalBikesSensor):
         return _object_id("cookie", "main", "nearby_total_bikes")
     if isinstance(ent, NearbyRecommendedBikesSensor):
@@ -156,16 +183,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator: SeoulPublicBikeCoordinator = hass.data[DOMAIN][entry.entry_id]
 
     entities: list[SensorEntity] = []
-    opts = entry.options or {}
-    use_week = bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
-    use_month = bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
-    periods: list[tuple[str, str, str]] = []
-    if use_week:
-        periods.append(("1w", DEVICE_NAME_USE_HISTORY_WEEK, "use_history_week"))
-    if use_month:
-        periods.append(("1m", DEVICE_NAME_USE_HISTORY_MONTH, "use_history_month"))
-    if not periods:
-        periods = [("1m", DEVICE_NAME_USE_HISTORY_MONTH, "use_history_month")]
+    periods: list[tuple[str, str, str]] = [("history", DEVICE_NAME_USE_HISTORY, "use_history")]
+
+    my_page_device_id = f"{entry.entry_id}_my_page"
+    my_page_device_name = DEVICE_NAME_MY_PAGE
 
     for period_key, device_name, device_suffix in periods:
         device_id = f"{entry.entry_id}_{device_suffix}"
@@ -177,33 +198,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 KcalBoxFloatSensor(coordinator, period_key, device_id, device_name, "칼로리 (kcal)", "칼로리", unit="kcal"),
                 KcalBoxFloatSensor(coordinator, period_key, device_id, device_name, "탄소 절감 효과 (kg)", "탄소절감효과", unit="kg"),
 
-                # 최근 이력
-                LastFieldSensor(coordinator, period_key, device_id, device_name, "최근 자전거", "bike"),
-                LastFieldSensor(coordinator, period_key, device_id, device_name, "최근 대여소", "rent_station"),
-                LastFieldSensor(coordinator, period_key, device_id, device_name, "최근 대여 일시", "rent_datetime"),
-                LastFieldSensor(coordinator, period_key, device_id, device_name, "최근 반납 대여소", "return_station"),
-                LastFieldSensor(coordinator, period_key, device_id, device_name, "최근 반납 일시", "return_datetime"),
-
-                # 이용권 유효기간
-                TicketExpirySensor(coordinator, period_key, device_id, device_name),
-
-                UseHistoryPeriodSensor(coordinator, period_key, device_id, device_name),
-
-                LastUpdateTimeSensor(coordinator, period_key, device_id, device_name),
+                # 대여 반납 이력
+                LastFieldSensor(coordinator, period_key, device_id, device_name, "자전거", "bike"),
+                LastFieldSensor(coordinator, period_key, device_id, device_name, "대여소", "rent_station"),
+                LastFieldSensor(coordinator, period_key, device_id, device_name, "대여 일시", "rent_datetime"),
+                LastFieldSensor(coordinator, period_key, device_id, device_name, "반납 대여소", "return_station"),
+                LastFieldSensor(coordinator, period_key, device_id, device_name, "반납 일시", "return_datetime"),
             ]
         )
 
-    primary_period = next((p for p in periods if p[0] == "1m"), periods[0])
-    primary_device_id = f"{entry.entry_id}_{primary_period[2]}"
-    primary_name = primary_period[1]
     entities.extend(
         [
-            CookieLastHttpStatusSensor(coordinator, primary_device_id, primary_name),
-            CookieLastErrorSensor(coordinator, primary_device_id, primary_name),
+            CookieLastHttpStatusSensor(coordinator, my_page_device_id, my_page_device_name),
+            CookieLastErrorSensor(coordinator, my_page_device_id, my_page_device_name),
+        ]
+    )
+
+    entities.extend(
+        [
+            MyPageLastUpdateTimeSensor(coordinator, my_page_device_id, my_page_device_name),
+            MyPageTicketExpirySensor(coordinator, my_page_device_id, my_page_device_name),
         ]
     )
 
     station_ids = list(getattr(coordinator, "stations_by_id", {}) or {})
+    distance_enabled = _distance_enabled(hass, coordinator)
     if station_ids:
         entities.extend(
             [
@@ -223,9 +242,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                     StationBikesSproutSensor(coordinator, entry, sid, station_name),
                     StationBikesRepairSensor(coordinator, entry, sid, station_name),
                     StationIdSensor(coordinator, entry, sid, station_name),
-                    StationDistanceSensor(coordinator, entry, sid, station_name),
                 ]
             )
+            if distance_enabled:
+                entities.append(StationDistanceSensor(coordinator, entry, sid, station_name))
 
     # 초기 즐겨찾기 엔티티 생성
     favs = (coordinator.data or {}).get("favorites") or []
@@ -237,11 +257,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         entities.append(FavoriteStationBikeCountSensor(coordinator, sid, sname, kind="normal"))
         entities.append(FavoriteStationBikeCountSensor(coordinator, sid, sname, kind="sprout"))
         entities.append(FavoriteStationIdSensor(coordinator, sid, sname))
+        if distance_enabled:
+            entities.append(FavoriteStationDistanceSensor(coordinator, sid, sname))
 
     _register_entity_ids(hass, entry, entities)
     async_add_entities(entities)
 
     ent_reg = er.async_get(hass)
+
+    async def _cleanup_legacy_use_history_sensors() -> None:
+        for period_key in ("1w", "1m"):
+            for suffix in ("ticket_expiry", "last_update_time"):
+                uid = f"{entry.entry_id}_{period_key}_{suffix}"
+                entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+                if entity_id:
+                    await ent_reg.async_remove(entity_id)
+        for suffix in ("http_status", "last_error"):
+            for period in ("use_history_week", "use_history_month"):
+                uid = f"{entry.entry_id}_{period}_{suffix}"
+                entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+                if entity_id:
+                    await ent_reg.async_remove(entity_id)
+
+    await _cleanup_legacy_use_history_sensors()
 
     def _current_station_ids() -> set[str]:
         data = coordinator.data or {}
@@ -267,8 +305,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     def _uid_station_id(station_id: str) -> str:
         return f"{entry.entry_id}_fav_{station_id}_station_id"
 
+    def _uid_fav_distance(station_id: str) -> str:
+        return f"{entry.entry_id}_fav_{station_id}_distance_m"
+
     # 최초 상태 기준으로 "관리 중인 즐겨찾기" 세트 저장
     coordinator._spb_fav_station_ids = _current_station_ids()  # type: ignore[attr-defined]
+    coordinator._spb_fav_distance_enabled = distance_enabled  # type: ignore[attr-defined]
 
     def _current_station_ids_from_status() -> set[str]:
         stations = getattr(coordinator, "stations_by_id", {}) or {}
@@ -306,6 +348,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async def _async_sync_favorites() -> None:
         prev: set[str] = set(getattr(coordinator, "_spb_fav_station_ids", set()))
         curr: set[str] = _current_station_ids()
+        distance_enabled = _distance_enabled(hass, coordinator)
+        prev_distance_enabled = getattr(coordinator, "_spb_fav_distance_enabled", distance_enabled)
 
         added = curr - prev
         removed = prev - curr
@@ -316,6 +360,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             new_entities.append(FavoriteStationBikeCountSensor(coordinator, sid, sname, kind="normal"))
             new_entities.append(FavoriteStationBikeCountSensor(coordinator, sid, sname, kind="sprout"))
             new_entities.append(FavoriteStationIdSensor(coordinator, sid, sname))
+            if distance_enabled:
+                new_entities.append(FavoriteStationDistanceSensor(coordinator, sid, sname))
+
+        if distance_enabled and not prev_distance_enabled:
+            for sid in sorted(curr):
+                if sid in added:
+                    continue
+                sname = _name_by_station_id(sid) or sid
+                new_entities.append(FavoriteStationDistanceSensor(coordinator, sid, sname))
 
         if new_entities:
             _register_entity_ids(hass, entry, new_entities)
@@ -323,16 +376,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         # entity_id는 entity_registry에서 unique_id로 찾아서 제거
         for sid in sorted(removed):
-            for uid in (_uid_normal(sid), _uid_sprout(sid), _uid_station_id(sid)):
+            for uid in (_uid_normal(sid), _uid_sprout(sid), _uid_station_id(sid), _uid_fav_distance(sid)):
+                entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+                if entity_id:
+                    await ent_reg.async_remove(entity_id)
+
+        if prev_distance_enabled and not distance_enabled:
+            for sid in sorted(curr):
+                uid = _uid_fav_distance(sid)
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
                     await ent_reg.async_remove(entity_id)
 
         coordinator._spb_fav_station_ids = curr  # type: ignore[attr-defined]
+        coordinator._spb_fav_distance_enabled = distance_enabled  # type: ignore[attr-defined]
 
     async def _async_sync_stations() -> None:
         prev: set[str] = set(getattr(coordinator, "_spb_station_ids", set()))
         curr: set[str] = _current_station_ids_from_status()
+        distance_enabled = _distance_enabled(hass, coordinator)
+        prev_distance_enabled = getattr(coordinator, "_spb_distance_enabled", distance_enabled)
 
         added = curr - prev
         removed = prev - curr
@@ -356,13 +419,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                     StationBikesSproutSensor(coordinator, entry, sid, sname),
                     StationBikesRepairSensor(coordinator, entry, sid, sname),
                     StationIdSensor(coordinator, entry, sid, sname),
-                    StationDistanceSensor(coordinator, entry, sid, sname),
                 ]
             )
+            if distance_enabled:
+                new_entities.append(StationDistanceSensor(coordinator, entry, sid, sname))
+
+        if distance_enabled and not prev_distance_enabled:
+            for sid in sorted(curr):
+                if sid in added:
+                    continue
+                sname = _station_name_from_status(sid)
+                new_entities.append(StationDistanceSensor(coordinator, entry, sid, sname))
 
         if new_entities:
             _register_entity_ids(hass, entry, new_entities)
             async_add_entities(new_entities)
+
+        if prev_distance_enabled and not distance_enabled:
+            for sid in sorted(curr):
+                uid = _uid_station_distance(sid)
+                entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+                if entity_id:
+                    await ent_reg.async_remove(entity_id)
 
         if removed:
             dev_reg = dr.async_get(hass)
@@ -395,6 +473,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 dev_reg.async_remove_device(device.id)
 
         coordinator._spb_station_ids = curr  # type: ignore[attr-defined]
+        coordinator._spb_distance_enabled = distance_enabled  # type: ignore[attr-defined]
 
     @callback
     def _on_coordinator_update() -> None:
@@ -556,29 +635,32 @@ class LastFieldSensor(_BaseUseHistorySensor):
         return "조회된 데이터가 없음"
 
 
-class TicketExpirySensor(_BaseUseHistorySensor):
-    _attr_name = "이용권 유효 기간"
-    _attr_device_class = SensorDeviceClass.TIMESTAMP
-    _attr_icon = "mdi:calendar-clock"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
+class _BaseMyPageSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
+    _attr_has_entity_name = True
 
-    def __init__(
-        self,
-        coordinator: SeoulPublicBikeCoordinator,
-        period_key: str,
-        device_id: str,
-        device_name: str,
-    ) -> None:
-        super().__init__(coordinator, period_key, device_id, device_name)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{period_key}_ticket_expiry"
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator)
+        self._device_id = device_id
+        self._device_name = device_name
 
     @property
-    def native_value(self):
-        iso = (self._data.get("ticket_expiry") or "")
-        if not iso:
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL_MY_PAGE,
+        }
+
+    @property
+    def _data(self) -> dict[str, Any]:
+        return (self.coordinator.data or {}).get("my_page") or {}
+
+    def _parse_timestamp(self, value: str | None) -> datetime | None:
+        if not value:
             return None
         try:
-            dt = datetime.fromisoformat(iso)
+            dt = datetime.fromisoformat(value)
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
             return dt_util.as_utc(dt)
@@ -586,62 +668,33 @@ class TicketExpirySensor(_BaseUseHistorySensor):
             return None
 
 
-class LastUpdateTimeSensor(_BaseUseHistorySensor):
+class MyPageLastUpdateTimeSensor(_BaseMyPageSensor):
     _attr_name = "마지막 업데이트 시간"
     _attr_device_class = SensorDeviceClass.TIMESTAMP
     _attr_icon = "mdi:update"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
-    def __init__(
-        self,
-        coordinator: SeoulPublicBikeCoordinator,
-        period_key: str,
-        device_id: str,
-        device_name: str,
-    ) -> None:
-        super().__init__(coordinator, period_key, device_id, device_name)
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{period_key}_last_update_time"
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator, device_id, device_name)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_my_page_last_update_time"
 
     @property
     def native_value(self):
-        iso = (self._data.get("updated_at") or "")
-        if not iso:
-            return None
-        try:
-            dt = datetime.fromisoformat(iso)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
-            return dt_util.as_utc(dt)
-        except Exception:
-            return None
+        return self._parse_timestamp(self._data.get("updated_at"))
 
 
-class UseHistoryPeriodSensor(_BaseUseHistorySensor):
-    _attr_has_entity_name = True
-    _attr_icon = "mdi:calendar-range"
+class MyPageTicketExpirySensor(_BaseMyPageSensor):
+    _attr_name = "이용권 유효 기간"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:calendar-clock"
+    _attr_entity_category = None
 
-    def __init__(
-        self,
-        coordinator: SeoulPublicBikeCoordinator,
-        period_key: str,
-        device_id: str,
-        device_name: str,
-    ) -> None:
-        super().__init__(coordinator, period_key, device_id, device_name)
-        self._attr_name = "조회 기간"
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{period_key}_period_range"
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator, device_id, device_name)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_my_page_ticket_expiry"
 
     @property
     def native_value(self):
-        start = self._data.get("period_start")
-        end = self._data.get("period_end")
-        if start and end:
-            return f"{start} ~ {end}"
-
-        days = 7 if self._period_key == "1w" else 30
-        today = datetime.now().date()
-        start_dt = today - timedelta(days=days)
-        return f"{start_dt.isoformat()} ~ {today.isoformat()}"
+        return self._parse_timestamp(self._data.get("voucher_end_dttm"))
 
 
 class CookieLastHttpStatusSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
@@ -662,7 +715,7 @@ class CookieLastHttpStatusSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], 
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": MANUFACTURER,
-            "model": MODEL_USE_HISTORY,
+            "model": MODEL_MY_PAGE,
         }
 
     @property
@@ -688,7 +741,7 @@ class CookieLastErrorSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], Senso
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": MANUFACTURER,
-            "model": MODEL_USE_HISTORY,
+            "model": MODEL_MY_PAGE,
         }
 
     @property
@@ -701,8 +754,6 @@ class CookieLastErrorSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], Senso
             "마지막 요청 URL": getattr(self.coordinator, "last_request_url", None),
             "쿠키 검증 상태": getattr(self.coordinator, "validation_status", None),
         }
-
-
 class FavoriteStationBikeCountSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
     _attr_has_entity_name = True
     _attr_native_unit_of_measurement = "대"
@@ -771,6 +822,55 @@ class FavoriteStationIdSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], Sen
         return self._station_id
 
 
+class FavoriteStationDistanceSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
+    _attr_has_entity_name = True
+    _attr_native_unit_of_measurement = "m"
+    _attr_icon = "mdi:map-marker-distance"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, station_id: str, station_name: str) -> None:
+        super().__init__(coordinator)
+        self._station_id = station_id
+        self._station_name = station_name
+        self._attr_name = "거리"
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_fav_{station_id}_distance_m"
+        self._device_id = f"{FAVORITE_DEVICE_PREFIX}_{coordinator.entry.entry_id}_{station_id}"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._station_name,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL_FAVORITE_STATION,
+        }
+
+    @property
+    def native_value(self) -> float | None:
+        st = (self.coordinator.stations_by_id or {}).get(self._station_id)
+        lat = None
+        lon = None
+        if st and st.lat and st.lon:
+            lat = st.lat
+            lon = st.lon
+        if lat is None or lon is None:
+            fav = (self.coordinator.data or {}).get("favorite_status") or {}
+            fdata = fav.get(self._station_id) or {}
+            try:
+                lat = float(fdata.get("lat"))
+                lon = float(fdata.get("lon"))
+            except Exception:
+                lat = None
+                lon = None
+        if lat is None or lon is None:
+            return None
+        coords = _coords_from_entity(self.coordinator.hass, self.coordinator.location_entity_id or "")
+        if not coords:
+            return None
+        center_lat, center_lon = coords
+        dist = haversine_m(center_lat, center_lon, lat, lon)
+        return round(dist, 1)
+
+
 class _StationControllerSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
     _attr_has_entity_name = True
 
@@ -798,7 +898,7 @@ class NearbyTotalBikesSensor(_StationControllerSensor):
     def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_nearby_total_bikes"
-        self._attr_name = "주변 총 대여 가능"
+        self._attr_name = "주변 대여 가능 자전거 (전체)"
 
     @property
     def native_value(self) -> int:
@@ -807,16 +907,14 @@ class NearbyTotalBikesSensor(_StationControllerSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {
-            "내 위치 엔티티": self.coordinator.location_entity_id,
+            "위치 엔티티": self.coordinator.location_entity_id,
             "주변 반경 (m)": self.coordinator.radius_m,
             "최소 자전거 수": self.coordinator.min_bikes,
-            "중심점 소스": self.coordinator.center_source,
+            "중심 위치": self.coordinator.center_source,
             "중심 위도": self.coordinator.center_lat,
             "중심 경도": self.coordinator.center_lon,
             "상태": self.coordinator.nearby_status,
         }
-
-
 class NearbyRecommendedBikesSensor(_StationControllerSensor):
     _attr_icon = "mdi:bicycle-basket"
     _attr_native_unit_of_measurement = "대"
@@ -824,7 +922,7 @@ class NearbyRecommendedBikesSensor(_StationControllerSensor):
     def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator, entry)
         self._attr_unique_id = f"{entry.entry_id}_nearby_recommended_bikes"
-        self._attr_name = "주변 추천 대여소 대여 가능"
+        self._attr_name = "주변 추천 대여소 대여 가능 자전거"
 
     @property
     def native_value(self) -> int:
@@ -839,8 +937,6 @@ class NearbyRecommendedBikesSensor(_StationControllerSensor):
             "최소 자전거 수": self.coordinator.min_bikes,
             "상태": self.coordinator.nearby_status,
         }
-
-
 class NearbyStationsListSensor(_StationControllerSensor):
     _attr_icon = "mdi:map-marker-radius"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -862,8 +958,6 @@ class NearbyStationsListSensor(_StationControllerSensor):
             "최소 자전거 수": self.coordinator.min_bikes,
             "상태": self.coordinator.nearby_status,
         }
-
-
 class _StationSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
     _attr_has_entity_name = True
 
@@ -973,7 +1067,9 @@ class StationDistanceSensor(_StationSensor):
         st = self.coordinator.stations_by_id.get(self._station_id)
         if not st or not st.lat or not st.lon:
             return None
-        if self.coordinator.center_lat is None or self.coordinator.center_lon is None:
+        coords = _coords_from_entity(self.coordinator.hass, self.coordinator.location_entity_id or "")
+        if not coords:
             return None
-        dist = haversine_m(self.coordinator.center_lat, self.coordinator.center_lon, st.lat, st.lon)
+        center_lat, center_lon = coords
+        dist = haversine_m(center_lat, center_lon, st.lat, st.lon)
         return round(dist, 1)

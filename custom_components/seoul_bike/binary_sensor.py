@@ -4,21 +4,16 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
 from .const import (
     DOMAIN,
-    DEVICE_NAME_USE_HISTORY_WEEK,
-    DEVICE_NAME_USE_HISTORY_MONTH,
+    DEVICE_NAME_MY_PAGE,
     MANUFACTURER,
-    MODEL_USE_HISTORY,
-    CONF_USE_HISTORY_WEEK,
-    CONF_USE_HISTORY_MONTH,
-    DEFAULT_USE_HISTORY_WEEK,
-    DEFAULT_USE_HISTORY_MONTH,
+    MODEL_MY_PAGE,
 )
 from .coordinator import SeoulPublicBikeCoordinator
 
@@ -85,15 +80,19 @@ def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: SeoulPublicBikeCoordinator = hass.data[DOMAIN][entry.entry_id]
-    opts = entry.options or {}
-    use_week = bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
-    use_month = bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
-    if not (use_week or use_month):
-        use_month = True
-    device_id = f"{entry.entry_id}_use_history_month" if use_month else f"{entry.entry_id}_use_history_week"
-    device_name = DEVICE_NAME_USE_HISTORY_MONTH if use_month else DEVICE_NAME_USE_HISTORY_WEEK
+    device_id = f"{entry.entry_id}_my_page"
+    device_name = DEVICE_NAME_MY_PAGE
     ent = UseHistoryDumpBinarySensor(coordinator, device_id, device_name)
-    _ensure_entity_id(hass, entry, ent.unique_id, _object_id("cookie", "month" if "month" in device_id else "week", "raw_data"))
+    ent_reg = er.async_get(hass)
+    existing_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, ent.unique_id)
+    if existing_id:
+        existing = ent_reg.async_get(existing_id)
+        if existing and existing.device_id:
+            dev_reg = dr.async_get(hass)
+            device = dev_reg.devices.get(existing.device_id)
+            if device and (DOMAIN, device_id) not in (device.identifiers or set()):
+                await ent_reg.async_remove(existing_id)
+    _ensure_entity_id(hass, entry, ent.unique_id, _object_id("cookie", "my_page", "raw_data"))
     async_add_entities([ent])
 
 
@@ -115,7 +114,7 @@ class UseHistoryDumpBinarySensor(CoordinatorEntity[SeoulPublicBikeCoordinator], 
             "identifiers": {(DOMAIN, self._device_id)},
             "name": self._device_name,
             "manufacturer": MANUFACTURER,
-            "model": MODEL_USE_HISTORY,
+            "model": MODEL_MY_PAGE,
         }
 
     @property

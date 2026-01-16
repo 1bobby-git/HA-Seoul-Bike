@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import calendar
 import logging
 import re
@@ -29,14 +30,10 @@ from .const import (
     CONF_MIN_BIKES,
     CONF_RADIUS_M,
     CONF_STATION_IDS,
-    CONF_USE_HISTORY_WEEK,
-    CONF_USE_HISTORY_MONTH,
     DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS,
     DEFAULT_MAX_RESULTS,
     DEFAULT_MIN_BIKES,
     DEFAULT_RADIUS_M,
-    DEFAULT_USE_HISTORY_WEEK,
-    DEFAULT_USE_HISTORY_MONTH,
     DOMAIN,
 )
 
@@ -138,11 +135,12 @@ class _KcalBoxParser(HTMLParser):
                 if name == "class" and "kcal_box" in value:
                     self.in_kcal_div = True
                     return
-        elif self.in_kcal_div and tag == "p":
-            # Reset current key when encountering a new <p> tag
-            if self.current_key is not None:
-                # If we encounter two keys in a row without a value, ignore
-                self.current_key = None
+        elif self.in_kcal_div and tag == "img":
+            for name, value in attrs:
+                if name == "alt" and value:
+                    if self.current_key is None:
+                        self.current_key = value.strip()
+                    return
 
     def handle_endtag(self, tag: str) -> None:
         if tag == "div" and self.in_kcal_div:
@@ -274,6 +272,70 @@ def _parse_ticket_expiry(left_html: str) -> datetime | None:
         dt_local = datetime(y, mo, d, 0, 0, tzinfo=tz)
         return dt_util.as_utc(dt_local)
 
+    return None
+
+
+def _parse_datetime_value(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    text = str(raw).strip()
+    if not text or text.lower() == "null":
+        return None
+    text = text.replace("/", "-").replace(".", "-")
+    m = re.search(
+        r"(20\d{2})-(\d{1,2})-(\d{1,2})(?:\s+(\d{1,2})(?::(\d{2}))?(?::(\d{2}))?)?",
+        text,
+    )
+    if not m:
+        return None
+    y, mo, d, hh, mm, ss = m.groups()
+    try:
+        dt_local = datetime(
+            int(y),
+            int(mo),
+            int(d),
+            int(hh or 0),
+            int(mm or 0),
+            int(ss or 0),
+            tzinfo=dt_util.DEFAULT_TIME_ZONE,
+        )
+    except Exception:
+        return None
+    return dt_util.as_utc(dt_local).isoformat()
+
+
+def _extract_voucher_info(payload: dict[str, Any]) -> dict[str, str | None]:
+    if not isinstance(payload, dict):
+        return {"voucher_end_dttm": None, "reg_dttm": None, "last_login_dttm": None}
+    data = payload.get("couponVo") or payload.get("voucherVo") or payload.get("data") or payload
+    if not isinstance(data, dict):
+        data = payload
+    voucher_end = data.get("voucherEndDttm") or payload.get("voucherEndDttm")
+    reg_dttm = data.get("regDttm") or payload.get("regDttm")
+    last_login = data.get("lastLoginDttm") or payload.get("lastLoginDttm")
+    return {
+        "voucher_end_dttm": _parse_datetime_value(voucher_end),
+        "reg_dttm": _parse_datetime_value(reg_dttm),
+        "last_login_dttm": _parse_datetime_value(last_login),
+    }
+
+
+def _extract_voucher_end_from_realtime(realtime_list: list[dict[str, Any]]) -> str | None:
+    if not realtime_list:
+        return None
+    for item in realtime_list:
+        if not isinstance(item, dict):
+            continue
+        for key in (
+            "voucherEndDttm",
+            "voucher_end_dttm",
+            "ticketEndDttm",
+            "ticket_end_dttm",
+            "validEndDttm",
+        ):
+            parsed = _parse_datetime_value(item.get(key))
+            if parsed:
+                return parsed
     return None
 
 
@@ -410,6 +472,30 @@ def _parse_use_history(html: str) -> dict[str, Any]:
     }
 
 
+def _merge_latest_history(payload: dict[str, Any], prev: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the latest entry and preserve previous values if new data is empty."""
+    hist = payload.get("history") or []
+    if isinstance(hist, list) and hist:
+        payload["history"] = [hist[0]]
+        payload["last"] = hist[0]
+    else:
+        prev_hist = prev.get("history")
+        if isinstance(prev_hist, list) and prev_hist:
+            payload["history"] = [prev_hist[0]]
+            payload["last"] = prev_hist[0]
+        else:
+            payload["history"] = []
+            payload["last"] = prev.get("last") or {}
+
+    if not payload.get("kcal") and prev.get("kcal"):
+        payload["kcal"] = prev.get("kcal")
+    if not payload.get("period_start") and prev.get("period_start"):
+        payload["period_start"] = prev.get("period_start")
+    if not payload.get("period_end") and prev.get("period_end"):
+        payload["period_end"] = prev.get("period_end")
+    return payload
+
+
 def _subtract_months(target: date, months: int) -> date:
     year = target.year
     month = target.month - months
@@ -424,6 +510,8 @@ def _history_range(period_key: str) -> tuple[str, str]:
     today = datetime.now().date()
     if period_key == "1w":
         start = today - timedelta(days=7)
+    elif period_key == "history":
+        start = _subtract_months(today, 1)
     else:
         start = _subtract_months(today, 1)
     return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
@@ -456,6 +544,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         raw_cookie = entry.options.get(CONF_COOKIE) or entry.data.get(CONF_COOKIE) or ""
         self._api = SeoulPublicBikeSiteApi(async_get_clientsession(hass), raw_cookie)
+        self._refresh_lock = asyncio.Lock()
         self.last_error: str | None = None
         self.last_http_status: int | None = None
         self.last_request_url: str | None = None
@@ -633,6 +722,318 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self.nearby = candidates
         self.nearby_recommended_bikes = sum(int(x.get("bikes_total") or 0) for x in self.nearby)
 
+    def _compute_nearby_from_statuses(self, statuses: list[dict[str, Any]]) -> None:
+        self._compute_center()
+
+        self.nearby = []
+        self.nearby_total_bikes = 0
+        self.nearby_recommended_bikes = 0
+
+        if self.center_lat is None or self.center_lon is None:
+            return
+
+        radius = max(1, int(self.radius_m or DEFAULT_RADIUS_M))
+        min_bikes = max(0, int(self.min_bikes or 0))
+        max_results = int(self.max_results or 0)
+
+        candidates: list[dict[str, Any]] = []
+        total = 0
+
+        for status in statuses:
+            st = self._station_from_status(status, None, None, None)
+            if not st or not st.lat or not st.lon:
+                continue
+            dist = haversine_m(self.center_lat, self.center_lon, st.lat, st.lon)
+            if dist > radius:
+                continue
+            if st.bikes_total < min_bikes:
+                continue
+
+            total += st.bikes_total
+            candidates.append(
+                {
+                    "station_id": st.station_id,
+                    "station_no": st.station_no,
+                    "station_name": f"{st.station_no}. {st.station_title}".strip() if st.station_no else st.station_title,
+                    "bikes_total": st.bikes_total,
+                    "distance_m": round(dist, 1),
+                }
+            )
+
+        candidates.sort(key=lambda x: (-int(x.get("bikes_total") or 0), float(x.get("distance_m") or 0.0)))
+
+        self.nearby_total_bikes = total
+        if max_results > 0:
+            self.nearby = candidates[:max_results]
+        else:
+            self.nearby = candidates
+        self.nearby_recommended_bikes = sum(int(x.get("bikes_total") or 0) for x in self.nearby)
+
+    async def _ensure_login(self) -> tuple[bool | None, dict[str, Any]]:
+        raw_cookie = self.entry.options.get(CONF_COOKIE) or self.entry.data.get(CONF_COOKIE) or ""
+        self._api.set_cookie(raw_cookie)
+
+        rent_status: dict[str, Any] = {}
+        login_ok: bool | None = None
+        username = str(self.entry.data.get(CONF_COOKIE_USERNAME) or "").strip()
+        password = str(self.entry.data.get(CONF_COOKIE_PASSWORD) or "").strip()
+        try:
+            rent_status = await self._api.fetch_rent_status()
+            login_ok = _status_login_ok(rent_status)
+        except Exception as err:
+            rent_status = {"error": str(err)}
+
+        if login_ok is False and username and password:
+            try:
+                new_cookie = await self._api.login(username, password)
+                self.hass.config_entries.async_update_entry(
+                    self.entry,
+                    data={**self.entry.data, CONF_COOKIE: new_cookie},
+                )
+                self._api.set_cookie(new_cookie)
+                rent_status = await self._api.fetch_rent_status()
+                login_ok = _status_login_ok(rent_status)
+            except Exception as err:
+                _LOGGER.debug("Re-login failed: %s", err)
+
+        if login_ok is False:
+            self.validation_status = "login_page"
+            self.last_error = "login_page"
+        elif login_ok is None:
+            self.validation_status = "error"
+        else:
+            self.validation_status = "ok"
+            self.last_error = None
+
+        self._sync_last_request_meta()
+        return login_ok, rent_status
+
+    async def async_refresh_my_page(self) -> None:
+        async with self._refresh_lock:
+            login_ok, rent_status = await self._ensure_login()
+            if login_ok is False:
+                return
+
+            updated_at = datetime.now().isoformat()
+            my_page: dict[str, Any] = {}
+            prev_my_page = (self.data or {}).get("my_page") or {}
+            realtime_voucher_end = None
+            try:
+                realtime_list = await self._api.fetch_station_realtime_all()
+                realtime_voucher_end = _extract_voucher_end_from_realtime(realtime_list)
+            except Exception as err:
+                _LOGGER.debug("Station realtime list fetch failed: %s", err)
+
+            need_voucher_api = (
+                not realtime_voucher_end
+                or not prev_my_page.get("reg_dttm")
+                or not prev_my_page.get("last_login_dttm")
+            )
+            if need_voucher_api:
+                try:
+                    payload = await self._api.fetch_voucher_info()
+                    my_page.update(_extract_voucher_info(payload))
+                except Exception as err:
+                    self.last_error = str(err)
+                    my_page["error"] = str(err)
+            else:
+                my_page["reg_dttm"] = prev_my_page.get("reg_dttm")
+                my_page["last_login_dttm"] = prev_my_page.get("last_login_dttm")
+
+            if not my_page.get("reg_dttm") and prev_my_page.get("reg_dttm"):
+                my_page["reg_dttm"] = prev_my_page.get("reg_dttm")
+            if not my_page.get("last_login_dttm") and prev_my_page.get("last_login_dttm"):
+                my_page["last_login_dttm"] = prev_my_page.get("last_login_dttm")
+
+            if realtime_voucher_end:
+                my_page["voucher_end_dttm"] = realtime_voucher_end
+            if not my_page.get("voucher_end_dttm"):
+                try:
+                    left_html = await self._api.fetch_left_page_html()
+                    ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
+                    if ticket_expiry:
+                        my_page["voucher_end_dttm"] = ticket_expiry.isoformat()
+                except Exception:
+                    pass
+            self._sync_last_request_meta()
+
+            my_page["updated_at"] = updated_at
+
+            data = dict(self.data or {})
+            data["my_page"] = my_page
+            if rent_status:
+                data["rent_status"] = rent_status
+            data["validation_status"] = self.validation_status
+            data["last_request"] = {
+                "url": self.last_request_url,
+                "http_status": self.last_http_status,
+                "error": self.last_error,
+            }
+            self.async_set_updated_data(data)
+
+    async def async_refresh_use_history(self, period_key: str) -> None:
+        async with self._refresh_lock:
+            login_ok, rent_status = await self._ensure_login()
+            if login_ok is False:
+                return
+
+            updated_at = datetime.now().isoformat()
+            base_html = await self._api.fetch_use_history_html()
+            html = await self._api.fetch_use_history_html(period=period_key, base_html=base_html)
+            self._sync_last_request_meta()
+            if _looks_like_login(html):
+                self.validation_status = "login_page"
+                self.last_error = "login_page"
+                self._sync_last_request_meta()
+                return
+
+            payload = _parse_use_history(html)
+            payload = _merge_latest_history(payload, (self.data or {}).get("periods", {}).get(period_key, {}))
+            if not payload.get("period_start") or not payload.get("period_end"):
+                start, end = _history_range(period_key)
+                payload["period_start"] = start
+                payload["period_end"] = end
+            payload["updated_at"] = updated_at
+
+            hist = payload.get("history") or []
+            hist_id = None
+            if isinstance(hist, list) and hist:
+                hist_id = (hist[0] or {}).get("history_id")
+            if hist_id:
+                try:
+                    payload["move_route"] = await self._api.fetch_move_route(str(hist_id))
+                except Exception as err:
+                    payload["move_route"] = {"error": str(err)}
+
+            data = dict(self.data or {})
+            periods = dict(data.get("periods") or {})
+            periods[period_key] = payload
+            data["periods"] = periods
+            if rent_status:
+                data["rent_status"] = rent_status
+            data["validation_status"] = self.validation_status
+            data["last_request"] = {
+                "url": self.last_request_url,
+                "http_status": self.last_http_status,
+                "error": self.last_error,
+            }
+            self.async_set_updated_data(data)
+
+    async def async_refresh_favorite_station(self, station_id: str) -> None:
+        async with self._refresh_lock:
+            await self._ensure_login()
+
+            data = dict(self.data or {})
+            favorites = data.get("favorites") or []
+            target = None
+            for f in favorites:
+                if (f.get("station_id") or "").strip() == station_id:
+                    target = f
+                    break
+            if not target:
+                return
+
+            try:
+                realtime_list = await self._api.fetch_station_realtime_all()
+            except Exception as err:
+                _LOGGER.debug("Station realtime list fetch failed: %s", err)
+                realtime_list = []
+            self._sync_last_request_meta()
+
+            realtime_by_id: dict[str, dict[str, Any]] = {}
+            realtime_by_no: dict[str, dict[str, Any]] = {}
+            for item in realtime_list:
+                sid = str(item.get("stationId") or "").strip().upper()
+                if sid:
+                    realtime_by_id[sid] = item
+                station_no = str(item.get("stationNo") or "").strip()
+                if station_no:
+                    realtime_by_no[station_no] = item
+
+            sid = str(target.get("station_id") or "").strip()
+            sno = str(target.get("station_no") or "").strip()
+            status = realtime_by_id.get(sid.upper()) or (realtime_by_no.get(sno) if sno else None)
+            normal = target.get("normal")
+            sprout = target.get("sprout")
+            lat = target.get("lat")
+            lon = target.get("lon")
+            if status:
+                st = self._station_from_status(status, sid, sno, target.get("station_name"))
+                if st:
+                    normal = st.bikes_general
+                    sprout = st.bikes_sprout
+                    lat = st.lat
+                    lon = st.lon
+
+            favorite_status = dict(data.get("favorite_status") or {})
+            favorite_status[sid] = {
+                "station_id": sid,
+                "station_name": target.get("station_name"),
+                "station_no": target.get("station_no"),
+                "normal": normal,
+                "sprout": sprout,
+                "lat": lat,
+                "lon": lon,
+            }
+            data["favorite_status"] = favorite_status
+            data["validation_status"] = self.validation_status
+            data["last_request"] = {
+                "url": self.last_request_url,
+                "http_status": self.last_http_status,
+                "error": self.last_error,
+            }
+            self.async_set_updated_data(data)
+
+    async def async_refresh_station(self, station_id: str) -> None:
+        async with self._refresh_lock:
+            data = dict(self.data or {})
+            if station_id not in self.stations_by_id:
+                return
+
+            try:
+                realtime_list = await self._api.fetch_station_realtime_all()
+            except Exception as err:
+                _LOGGER.debug("Station realtime list fetch failed: %s", err)
+                realtime_list = []
+            self._sync_last_request_meta()
+
+            realtime_by_id: dict[str, dict[str, Any]] = {}
+            realtime_by_no: dict[str, dict[str, Any]] = {}
+            for item in realtime_list:
+                sid = str(item.get("stationId") or "").strip().upper()
+                if sid:
+                    realtime_by_id[sid] = item
+                station_no = str(item.get("stationNo") or "").strip()
+                if station_no:
+                    realtime_by_no[station_no] = item
+
+            prev = dict(self.stations_by_id)
+            fallback = prev.get(station_id)
+            station_no = fallback.station_no if fallback else None
+            status = realtime_by_id.get(station_id.upper()) or (realtime_by_no.get(station_no) if station_no else None)
+            if status:
+                st = self._station_from_status(status, station_id, station_no, fallback.station_title if fallback else None)
+                if st:
+                    prev[station_id] = st
+                    self.stations_by_id = prev
+            data["station_count"] = len(self.stations_by_id)
+            self.async_set_updated_data(data)
+
+    async def async_refresh_station_controller(self) -> None:
+        async with self._refresh_lock:
+            try:
+                realtime_list = await self._api.fetch_station_realtime_all()
+            except Exception as err:
+                _LOGGER.debug("Station realtime list fetch failed: %s", err)
+                realtime_list = []
+            self._sync_last_request_meta()
+
+            if realtime_list:
+                self._compute_nearby_from_statuses(realtime_list)
+            data = dict(self.data or {})
+            data["nearby_count"] = len(self.nearby)
+            self.async_set_updated_data(data)
+
     async def _async_update_data(self) -> dict[str, Any]:
         try:
             self.last_error = None
@@ -641,11 +1042,6 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._api.set_cookie(raw_cookie)
 
             opts = self.entry.options or {}
-            use_week = bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
-            use_month = bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
-            if not (use_week or use_month):
-                use_month = True
-
             station_raw = opts.get(CONF_STATION_IDS, self.entry.data.get(CONF_STATION_IDS, []))
             self.station_ids = _parse_station_list(station_raw)
             has_station_ids = bool(self.station_ids)
@@ -708,6 +1104,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "updated_at": datetime.now().isoformat(),
                     "periods": {},
                     "ticket_expiry": None,
+                    "my_page": {},
                     "favorites": [],
                     "favorite_status": {},
                     "rent_status": rent_status,
@@ -732,11 +1129,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     reconsent_status = {"error": str(err)}
 
             base_html = await self._api.fetch_use_history_html()
-            period_html: dict[str, str] = {}
-            if use_week:
-                period_html["1w"] = await self._api.fetch_use_history_html(period="1w", base_html=base_html)
-            if use_month:
-                period_html["1m"] = await self._api.fetch_use_history_html(period="1m", base_html=base_html)
+            period_html: dict[str, str] = {"history": base_html}
 
             if period_html and all(_looks_like_login(h) for h in period_html.values()):
                 self.validation_status = "login_page"
@@ -747,6 +1140,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "updated_at": datetime.now().isoformat(),
                     "periods": {},
                     "ticket_expiry": None,
+                    "my_page": {},
                     "favorites": [],
                     "favorite_status": {},
                     "rent_status": rent_status,
@@ -762,22 +1156,15 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             updated_at = datetime.now().isoformat()
             periods: dict[str, Any] = {}
-            if "1w" in period_html:
-                payload = _parse_use_history(period_html["1w"])
+            if "history" in period_html:
+                payload = _parse_use_history(period_html["history"])
+                payload = _merge_latest_history(payload, (self.data or {}).get("periods", {}).get("history", {}))
                 if not payload.get("period_start") or not payload.get("period_end"):
-                    start, end = _history_range("1w")
+                    start, end = _history_range("history")
                     payload["period_start"] = start
                     payload["period_end"] = end
                 payload["updated_at"] = updated_at
-                periods["1w"] = payload
-            if "1m" in period_html:
-                payload = _parse_use_history(period_html["1m"])
-                if not payload.get("period_start") or not payload.get("period_end"):
-                    start, end = _history_range("1m")
-                    payload["period_start"] = start
-                    payload["period_end"] = end
-                payload["updated_at"] = updated_at
-                periods["1m"] = payload
+                periods["history"] = payload
 
             for pdata in periods.values():
                 hist = pdata.get("history") or []
@@ -790,20 +1177,13 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     except Exception as err:
                         pdata["move_route"] = {"error": str(err)}
 
-
-            left_html = await self._api.fetch_left_page_html()
-            ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
-            ticket_expiry_iso = ticket_expiry.isoformat() if ticket_expiry else None
-            for pdata in periods.values():
-                pdata["ticket_expiry"] = ticket_expiry_iso
-
             fav_html = await self._api.fetch_favorites_html()
             favorites = [] if _looks_like_login(fav_html) else _extract_favorites_with_counts(fav_html)
 
             realtime_list: list[dict[str, Any]] = []
             realtime_by_id: dict[str, dict[str, Any]] = {}
             realtime_by_no: dict[str, dict[str, Any]] = {}
-            if self.station_ids or favorites:
+            if self.station_ids or favorites or self.location_entity_id:
                 try:
                     realtime_list = await self._api.fetch_station_realtime_all()
                 except Exception as err:
@@ -818,24 +1198,69 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if station_no:
                     realtime_by_no[station_no] = item
 
+            realtime_voucher_end = _extract_voucher_end_from_realtime(realtime_list)
+            prev_my_page = (self.data or {}).get("my_page") or {}
+            voucher_payload: dict[str, Any] = {}
+            need_voucher_api = (
+                not realtime_voucher_end
+                or not prev_my_page.get("reg_dttm")
+                or not prev_my_page.get("last_login_dttm")
+            )
+            if need_voucher_api:
+                try:
+                    voucher_payload = await self._api.fetch_voucher_info()
+                except Exception as err:
+                    voucher_payload = {"error": str(err)}
+                voucher_info = _extract_voucher_info(voucher_payload)
+            else:
+                voucher_info = {
+                    "voucher_end_dttm": None,
+                    "reg_dttm": prev_my_page.get("reg_dttm"),
+                    "last_login_dttm": prev_my_page.get("last_login_dttm"),
+                }
+            if realtime_voucher_end:
+                voucher_info["voucher_end_dttm"] = realtime_voucher_end
+            if not voucher_info.get("reg_dttm") and prev_my_page.get("reg_dttm"):
+                voucher_info["reg_dttm"] = prev_my_page.get("reg_dttm")
+            if not voucher_info.get("last_login_dttm") and prev_my_page.get("last_login_dttm"):
+                voucher_info["last_login_dttm"] = prev_my_page.get("last_login_dttm")
+
+            ticket_expiry_iso = voucher_info.get("voucher_end_dttm")
+            if not ticket_expiry_iso:
+                left_html = await self._api.fetch_left_page_html()
+                ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
+                ticket_expiry_iso = ticket_expiry.isoformat() if ticket_expiry else None
+
+            my_page = dict(voucher_info)
+            if "error" in voucher_payload:
+                my_page["error"] = voucher_payload.get("error")
+            my_page["voucher_end_dttm"] = ticket_expiry_iso
+            my_page["updated_at"] = updated_at
+
             favorite_status: dict[str, Any] = {}
             for f in favorites:
                 sid = f.get("station_id") or ""
                 sno = f.get("station_no") or ""
                 normal = f.get("normal")
                 sprout = f.get("sprout")
+                lat = None
+                lon = None
                 status = realtime_by_id.get(str(sid).upper()) or (realtime_by_no.get(str(sno)) if sno else None)
                 if status:
                     st = self._station_from_status(status, str(sid), str(sno), f.get("station_name"))
                     if st:
                         normal = st.bikes_general
                         sprout = st.bikes_sprout
+                        lat = st.lat
+                        lon = st.lon
                 favorite_status[sid] = {
                     "station_id": sid,
                     "station_name": f.get("station_name"),
                     "station_no": f.get("station_no"),
                     "normal": normal,
                     "sprout": sprout,
+                    "lat": lat,
+                    "lon": lon,
                 }
 
             prev_stations = dict(self.stations_by_id)
@@ -867,7 +1292,11 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.stations_by_id = stations_by_id
             else:
                 self.stations_by_id = prev_stations
-            self._compute_nearby()
+
+            if realtime_list:
+                self._compute_nearby_from_statuses(realtime_list)
+            else:
+                self._compute_nearby()
 
             self._sync_last_request_meta()
             return {
@@ -875,6 +1304,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "updated_at": updated_at,
                 "periods": periods,
                 "ticket_expiry": ticket_expiry_iso,
+                "my_page": my_page,
                 "favorites": favorites,          # counts 포함
                 "favorite_status": favorite_status,
                 "rent_status": rent_status,

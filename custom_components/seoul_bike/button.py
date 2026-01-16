@@ -10,19 +10,16 @@ from homeassistant.util import slugify
 
 from .const import (
     DOMAIN,
-    DEVICE_NAME_USE_HISTORY_WEEK,
-    DEVICE_NAME_USE_HISTORY_MONTH,
+    DEVICE_NAME_USE_HISTORY,
+    DEVICE_NAME_MY_PAGE,
     INTEGRATION_NAME,
     MANUFACTURER,
     MODEL_CONTROLLER,
     MODEL_USE_HISTORY,
     MODEL_FAVORITE_STATION,
     MODEL_STATION,
+    MODEL_MY_PAGE,
     FAVORITE_DEVICE_PREFIX,
-    CONF_USE_HISTORY_WEEK,
-    CONF_USE_HISTORY_MONTH,
-    DEFAULT_USE_HISTORY_WEEK,
-    DEFAULT_USE_HISTORY_MONTH,
     CONF_COOKIE_USERNAME,
 )
 from .coordinator import SeoulPublicBikeCoordinator
@@ -58,8 +55,9 @@ def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | 
 
 def _object_id_for_entity(ent: ButtonEntity) -> str | None:
     if isinstance(ent, UseHistoryRefreshButton):
-        ident = "week" if ent._device_id.endswith("use_history_week") else "month"
-        return _object_id("cookie", ident, "refresh")
+        return _object_id("cookie", "history", "refresh")
+    if isinstance(ent, MyPageRefreshButton):
+        return _object_id("cookie", "my_page", "refresh")
     if isinstance(ent, FavoriteStationRefreshButton):
         return _object_id("cookie", ent._station_id, "refresh")
     if isinstance(ent, StationControllerRefreshButton):
@@ -78,21 +76,12 @@ def _register_entity_ids(hass: HomeAssistant, entry: ConfigEntry, entities: list
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator: SeoulPublicBikeCoordinator = hass.data[DOMAIN][entry.entry_id]
 
-    opts = entry.options or {}
-    use_week = bool(opts.get(CONF_USE_HISTORY_WEEK, DEFAULT_USE_HISTORY_WEEK))
-    use_month = bool(opts.get(CONF_USE_HISTORY_MONTH, DEFAULT_USE_HISTORY_MONTH))
-    if not (use_week or use_month):
-        use_month = True
-
     entities: list[ButtonEntity] = []
-    if use_week:
-        entities.append(
-            UseHistoryRefreshButton(coordinator, entry.entry_id, "use_history_week", DEVICE_NAME_USE_HISTORY_WEEK)
-        )
-    if use_month:
-        entities.append(
-            UseHistoryRefreshButton(coordinator, entry.entry_id, "use_history_month", DEVICE_NAME_USE_HISTORY_MONTH)
-        )
+    entities.append(
+        UseHistoryRefreshButton(coordinator, entry.entry_id, "use_history", DEVICE_NAME_USE_HISTORY)
+    )
+
+    entities.append(MyPageRefreshButton(coordinator, entry.entry_id, DEVICE_NAME_MY_PAGE))
 
     favs = (coordinator.data or {}).get("favorites") or []
     for f in favs:
@@ -114,6 +103,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     async_add_entities(entities)
 
     ent_reg = er.async_get(hass)
+    async def _cleanup_legacy_use_history_buttons() -> None:
+        for suffix in ("use_history_week", "use_history_month"):
+            uid = f"{entry.entry_id}_{suffix}_refresh"
+            entity_id = ent_reg.async_get_entity_id("button", DOMAIN, uid)
+            if entity_id:
+                await ent_reg.async_remove(entity_id)
+
+    await _cleanup_legacy_use_history_buttons()
 
     def _current_station_ids() -> set[str]:
         data = coordinator.data or {}
@@ -226,6 +223,7 @@ class UseHistoryRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], But
         self._device_id = f"{entry_id}_{device_suffix}"
         self._device_name = device_name
         self._attr_unique_id = f"{entry_id}_{device_suffix}_refresh"
+        self._period_key = "history"
 
     @property
     def device_info(self):
@@ -237,7 +235,31 @@ class UseHistoryRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], But
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.async_refresh()
+        await self.coordinator.async_refresh_use_history(self._period_key)
+
+
+class MyPageRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):
+    _attr_has_entity_name = True
+    _attr_name = "새로 고침"
+    _attr_icon = "mdi:refresh"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, entry_id: str, device_name: str) -> None:
+        super().__init__(coordinator)
+        self._device_id = f"{entry_id}_my_page"
+        self._device_name = device_name
+        self._attr_unique_id = f"{entry_id}_my_page_refresh"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL_MY_PAGE,
+        }
+
+    async def async_press(self) -> None:
+        await self.coordinator.async_refresh_my_page()
 
 
 class FavoriteStationRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):
@@ -262,7 +284,7 @@ class FavoriteStationRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator]
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.async_refresh()
+        await self.coordinator.async_refresh_favorite_station(self._station_id)
 
 
 class StationControllerRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):
@@ -287,7 +309,7 @@ class StationControllerRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinato
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.async_refresh()
+        await self.coordinator.async_refresh_station_controller()
 
 
 class StationRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):
@@ -314,4 +336,4 @@ class StationRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], Button
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.async_refresh()
+        await self.coordinator.async_refresh_station(self._station_id)
