@@ -1,4 +1,4 @@
-# custom_components/seoul_bike/modes/cookie/sensor.py
+# custom_components/seoul_bike/sensor.py
 
 from __future__ import annotations
 
@@ -204,6 +204,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 LastFieldSensor(coordinator, period_key, device_id, device_name, "대여 일시", "rent_datetime"),
                 LastFieldSensor(coordinator, period_key, device_id, device_name, "반납 대여소", "return_station"),
                 LastFieldSensor(coordinator, period_key, device_id, device_name, "반납 일시", "return_datetime"),
+
+                # 이동 경로
+                MoveRouteDistanceSensor(coordinator, period_key, device_id, device_name),
             ]
         )
 
@@ -218,6 +221,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         [
             MyPageLastUpdateTimeSensor(coordinator, my_page_device_id, my_page_device_name),
             MyPageTicketExpirySensor(coordinator, my_page_device_id, my_page_device_name),
+            MyPageRegDttmSensor(coordinator, my_page_device_id, my_page_device_name),
+            MyPageLastLoginSensor(coordinator, my_page_device_id, my_page_device_name),
         ]
     )
 
@@ -593,7 +598,6 @@ class KcalBoxFloatSensor(_BaseUseHistorySensor):
         v = self._kcal.get(self._key)
         if not v:
             return 0
-        import re
         m = re.search(r"[-+]?\d+(?:\.\d+)?", v)
         return float(m.group(0)) if m else 0
 
@@ -633,6 +637,45 @@ class LastFieldSensor(_BaseUseHistorySensor):
             if v:
                 return v
         return "조회된 데이터가 없음"
+
+
+class MoveRouteDistanceSensor(_BaseUseHistorySensor):
+    _attr_native_unit_of_measurement = "m"
+    _attr_icon = "mdi:map-marker-distance"
+
+    def __init__(
+        self,
+        coordinator: SeoulPublicBikeCoordinator,
+        period_key: str,
+        device_id: str,
+        device_name: str,
+    ) -> None:
+        super().__init__(coordinator, period_key, device_id, device_name)
+        self._attr_name = "최근 이동 거리"
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_{period_key}_move_distance"
+
+    @property
+    def native_value(self) -> float | None:
+        move_route = self._data.get("move_route") or {}
+        if not isinstance(move_route, dict):
+            return None
+        dist = move_route.get("moveDist") or move_route.get("distance")
+        if dist is None:
+            return None
+        try:
+            return float(dist)
+        except (ValueError, TypeError):
+            return None
+
+    @property
+    def extra_state_attributes(self):
+        move_route = self._data.get("move_route") or {}
+        if not isinstance(move_route, dict):
+            return {}
+        return {
+            "이동 시간 (초)": move_route.get("moveTime"),
+            "경로 좌표": move_route.get("routeList"),
+        }
 
 
 class _BaseMyPageSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
@@ -695,6 +738,36 @@ class MyPageTicketExpirySensor(_BaseMyPageSensor):
     @property
     def native_value(self):
         return self._parse_timestamp(self._data.get("voucher_end_dttm"))
+
+
+class MyPageRegDttmSensor(_BaseMyPageSensor):
+    _attr_name = "가입일"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:account-plus"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator, device_id, device_name)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_my_page_reg_dttm"
+
+    @property
+    def native_value(self):
+        return self._parse_timestamp(self._data.get("reg_dttm"))
+
+
+class MyPageLastLoginSensor(_BaseMyPageSensor):
+    _attr_name = "마지막 로그인"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:login"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator, device_id, device_name)
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_my_page_last_login"
+
+    @property
+    def native_value(self):
+        return self._parse_timestamp(self._data.get("last_login_dttm"))
 
 
 class CookieLastHttpStatusSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):

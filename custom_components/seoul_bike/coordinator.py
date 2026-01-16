@@ -1,4 +1,4 @@
-# custom_components/seoul_bike/modes/cookie/coordinator.py
+# custom_components/seoul_bike/coordinator.py
 
 from __future__ import annotations
 
@@ -878,8 +878,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return
 
             updated_at = datetime.now().isoformat()
-            base_html = await self._api.fetch_use_history_html()
-            html = await self._api.fetch_use_history_html(period=period_key, base_html=base_html)
+            html = await self._api.fetch_use_history_html()
             self._sync_last_request_meta()
             if _looks_like_login(html):
                 self.validation_status = "login_page"

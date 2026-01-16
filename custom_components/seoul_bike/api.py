@@ -1,12 +1,10 @@
-# custom_components/seoul_bike/modes/cookie/api.py
+# custom_components/seoul_bike/api.py
 
 from __future__ import annotations
 
-import calendar
 import json
 import logging
 import re
-from datetime import date, datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -282,43 +280,9 @@ class SeoulPublicBikeSiteApi:
             return f"{self.BASE}{href}"
         return f"{self.BASE}/{href.lstrip('./')}"
 
-    def _format_date(self, target: date) -> str:
-        return target.strftime("%Y-%m-%d")
-
-    def _subtract_months(self, target: date, months: int) -> date:
-        year = target.year
-        month = target.month - months
-        while month <= 0:
-            year -= 1
-            month += 12
-        day = min(target.day, calendar.monthrange(year, month)[1])
-        return date(year, month, day)
-
-    def _history_date_range(self, period: str) -> tuple[str, str]:
-        today = datetime.now().date()
-        if period == "1w":
-            start = today - timedelta(days=7)
-        else:
-            start = self._subtract_months(today, 1)
-        return self._format_date(start), self._format_date(today)
-
-    async def fetch_use_history_html(self, period: str | None = None, base_html: str | None = None) -> str:
+    async def fetch_use_history_html(self) -> str:
         path = "/app/mybike/getMemberUseHistory.do"
-        if not period:
-            return base_html or await self._get_text(path, referer_path=path)
-
-        start_date, end_date = self._history_date_range(period)
-        payload = {
-            "searchStartDate": start_date,
-            "searchEndDate": end_date,
-            "currentPageNo": "1",
-            "rentHistSeq": "",
-            "rentDttm": "",
-        }
-        try:
-            return await self._post_text(path, payload, referer_path=path)
-        except Exception:
-            return base_html or await self._get_text(path, referer_path=path)
+        return await self._get_text(path, referer_path=path)
 
     async def fetch_rent_status(self) -> dict[str, Any]:
         last_exc: Exception | None = None
@@ -351,22 +315,6 @@ class SeoulPublicBikeSiteApi:
             "/app/mybike/coupon/validChkVoucherAjax.do",
             data={},
             referer_path="/app/mybike/coupon/validChkVoucher.do",
-        )
-
-    async def fetch_coupon_validation(self, coupon_no: str | None) -> dict[str, Any]:
-        if not coupon_no:
-            return {}
-        return await self._post_json(
-            "/app/mybike/coupon/validChkVoucherAjax.do",
-            data={"couponNo": str(coupon_no)},
-            referer_path="/app/mybike/coupon/validChkVoucher.do",
-        )
-
-    async def fetch_booking_cancel(self) -> dict[str, Any]:
-        return await self._post_json(
-            "/app/rent/exeBookingCancelProc.do",
-            data={},
-            referer_path="/app/rent/",
         )
 
     async def fetch_left_page_html(self) -> str:

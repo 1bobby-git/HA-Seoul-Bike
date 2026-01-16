@@ -82,18 +82,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     coordinator: SeoulPublicBikeCoordinator = hass.data[DOMAIN][entry.entry_id]
     device_id = f"{entry.entry_id}_my_page"
     device_name = DEVICE_NAME_MY_PAGE
-    ent = UseHistoryDumpBinarySensor(coordinator, device_id, device_name)
+
+    entities = [
+        UseHistoryDumpBinarySensor(coordinator, device_id, device_name),
+        CurrentRentStatusBinarySensor(coordinator, device_id, device_name),
+    ]
+
     ent_reg = er.async_get(hass)
-    existing_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, ent.unique_id)
-    if existing_id:
-        existing = ent_reg.async_get(existing_id)
-        if existing and existing.device_id:
-            dev_reg = dr.async_get(hass)
-            device = dev_reg.devices.get(existing.device_id)
-            if device and (DOMAIN, device_id) not in (device.identifiers or set()):
-                await ent_reg.async_remove(existing_id)
-    _ensure_entity_id(hass, entry, ent.unique_id, _object_id("cookie", "my_page", "raw_data"))
-    async_add_entities([ent])
+    for ent in entities:
+        existing_id = ent_reg.async_get_entity_id("binary_sensor", DOMAIN, ent.unique_id)
+        if existing_id:
+            existing = ent_reg.async_get(existing_id)
+            if existing and existing.device_id:
+                dev_reg = dr.async_get(hass)
+                device = dev_reg.devices.get(existing.device_id)
+                if device and (DOMAIN, device_id) not in (device.identifiers or set()):
+                    await ent_reg.async_remove(existing_id)
+
+    _ensure_entity_id(hass, entry, entities[0].unique_id, _object_id("cookie", "my_page", "raw_data"))
+    _ensure_entity_id(hass, entry, entities[1].unique_id, _object_id("cookie", "my_page", "rent_status"))
+    async_add_entities(entities)
 
 
 class UseHistoryDumpBinarySensor(CoordinatorEntity[SeoulPublicBikeCoordinator], BinarySensorEntity):
@@ -125,3 +133,41 @@ class UseHistoryDumpBinarySensor(CoordinatorEntity[SeoulPublicBikeCoordinator], 
     @property
     def extra_state_attributes(self):
         return _summarize_data(self.coordinator.data or {})
+
+
+class CurrentRentStatusBinarySensor(CoordinatorEntity[SeoulPublicBikeCoordinator], BinarySensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "현재 대여 중"
+    _attr_icon = "mdi:bicycle"
+
+    def __init__(self, coordinator: SeoulPublicBikeCoordinator, device_id: str, device_name: str) -> None:
+        super().__init__(coordinator)
+        self._device_id = device_id
+        self._device_name = device_name
+        self._attr_unique_id = f"{coordinator.entry.entry_id}_current_rent"
+
+    @property
+    def device_info(self):
+        return {
+            "identifiers": {(DOMAIN, self._device_id)},
+            "name": self._device_name,
+            "manufacturer": MANUFACTURER,
+            "model": MODEL_MY_PAGE,
+        }
+
+    @property
+    def is_on(self) -> bool:
+        data = self.coordinator.data or {}
+        rent_status = data.get("rent_status") or {}
+        rent_yn = str(rent_status.get("rentYn") or "").strip().upper()
+        return rent_yn == "Y"
+
+    @property
+    def extra_state_attributes(self):
+        data = self.coordinator.data or {}
+        rent_status = data.get("rent_status") or {}
+        return {
+            "대여소": rent_status.get("stationName"),
+            "자전거 번호": rent_status.get("bikeNo"),
+            "대여 시작": rent_status.get("rentDttm"),
+        }

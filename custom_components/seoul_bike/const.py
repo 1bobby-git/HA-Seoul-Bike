@@ -1,4 +1,4 @@
-﻿# custom_components/seoul_bike/modes/cookie/const.py
+# custom_components/seoul_bike/const.py
 
 DOMAIN = "seoul_bike"
 
