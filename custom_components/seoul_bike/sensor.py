@@ -29,13 +29,14 @@ from .const import (
     DEVICE_NAME_USE_HISTORY,
     DEVICE_NAME_MY_PAGE,
     CONF_COOKIE_USERNAME,
+    make_object_id,
+    station_display_name,
 )
 from .coordinator import SeoulPublicBikeCoordinator, haversine_m
 
 
-
-def _object_id(mode: str, identifier: str, name: str) -> str:
-    return slugify(f"seoul_bike_{mode}_{identifier}_{name}")
+# Alias for local usage
+_object_id = make_object_id
 
 
 def _resolve_location_device_name(hass: HomeAssistant, location_entity_id: str) -> str | None:
@@ -59,14 +60,8 @@ def _resolve_location_device_name(hass: HomeAssistant, location_entity_id: str) 
     return None
 
 
-def _station_display_name(station: Any | None, fallback: str) -> str:
-    if not station:
-        return fallback
-    station_no = str(getattr(station, "station_no", "") or "").strip()
-    title = str(getattr(station, "station_title", "") or "").strip()
-    if station_no and title:
-        return f"{station_no}. {title}"
-    return title or station_no or fallback
+# Use centralized station_display_name from const.py
+_station_display_name = station_display_name
 
 
 def _coords_from_entity(hass: HomeAssistant, entity_id: str) -> tuple[float, float] | None:

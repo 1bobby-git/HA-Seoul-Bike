@@ -14,10 +14,14 @@ from .const import (
     DEVICE_NAME_MY_PAGE,
     MANUFACTURER,
     MODEL_MY_PAGE,
+    make_object_id,
 )
 from .coordinator import SeoulPublicBikeCoordinator
 
 _MAX_FAVORITE_IDS = 20
+
+# Alias for local usage
+_object_id = make_object_id
 
 
 def _summarize_data(data: dict) -> dict:
@@ -60,10 +64,6 @@ def _summarize_data(data: dict) -> dict:
         "favorite_station_ids_truncated": isinstance(favorites, list) and len(favorites) > _MAX_FAVORITE_IDS,
     }
 
-
-
-def _object_id(mode: str, identifier: str, name: str) -> str:
-    return slugify(f"seoul_bike_{mode}_{identifier}_{name}")
 
 
 def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | None, object_id: str) -> None:

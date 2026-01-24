@@ -21,23 +21,15 @@ from .const import (
     MODEL_MY_PAGE,
     FAVORITE_DEVICE_PREFIX,
     CONF_COOKIE_USERNAME,
+    make_object_id,
+    station_display_name,
 )
 from .coordinator import SeoulPublicBikeCoordinator
 
 
-
-def _object_id(mode: str, identifier: str, name: str) -> str:
-    return slugify(f"seoul_bike_{mode}_{identifier}_{name}")
-
-
-def _station_display_name(station: object | None, fallback: str) -> str:
-    if not station:
-        return fallback
-    station_no = str(getattr(station, "station_no", "") or "").strip()
-    title = str(getattr(station, "station_title", "") or "").strip()
-    if station_no and title:
-        return f"{station_no}. {title}"
-    return title or station_no or fallback
+# Alias for local usage
+_object_id = make_object_id
+_station_display_name = station_display_name
 
 
 def _ensure_entity_id(hass: HomeAssistant, entry: ConfigEntry, unique_id: str | None, object_id: str) -> None:

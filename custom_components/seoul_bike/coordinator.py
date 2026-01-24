@@ -34,12 +34,11 @@ from .const import (
     DEFAULT_MAX_RESULTS,
     DEFAULT_MIN_BIKES,
     DEFAULT_RADIUS_M,
+    DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
 )
 
 _LOGGER = logging.getLogger(__name__)
-
-DEFAULT_SCAN_INTERVAL_S = 60
 _DATA_MARKER_RE = re.compile(
     r"(kcal_box|payment_box|moveRentalStation\(\s*'ST-[^']+'\s*,\s*'[^']+'\s*\))",
     re.IGNORECASE,

@@ -9,6 +9,22 @@ from typing import Any
 
 import aiohttp
 
+from .const import (
+    BIKESEOUL_BASE_URL,
+    API_PATH_LOGIN,
+    API_PATH_RENT_STATUS,
+    API_PATH_RENT_STATUS_ALT,
+    API_PATH_USER_STATUS,
+    API_PATH_RECONSENT,
+    API_PATH_USE_HISTORY,
+    API_PATH_MOVE_ROUTE,
+    API_PATH_VOUCHER_INFO,
+    API_PATH_LEFT_PAGE,
+    API_PATH_FAVORITES,
+    API_PATH_STATION_REALTIME,
+    API_PATH_STATION_REALTIME_ALL,
+)
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -45,7 +61,7 @@ def _strip_tags(text: str) -> str:
 
 
 class SeoulPublicBikeSiteApi:
-    BASE = "https://www.bikeseoul.com"
+    BASE = BIKESEOUL_BASE_URL
 
     def __init__(self, session: aiohttp.ClientSession, cookie: str) -> None:
         self._session = session
@@ -252,7 +268,7 @@ class SeoulPublicBikeSiteApi:
         return action, inputs, user_field, pass_field
 
     async def login(self, username: str, password: str) -> str:
-        login_page = await self._get_text("/login.do", referer_path="/login.do")
+        login_page = await self._get_text(API_PATH_LOGIN, referer_path=API_PATH_LOGIN)
         action, inputs, user_field, pass_field = self._extract_login_form(login_page)
         if not user_field:
             user_field = "j_username"
@@ -260,7 +276,7 @@ class SeoulPublicBikeSiteApi:
             pass_field = "j_password"
         inputs[user_field] = username
         inputs[pass_field] = password
-        await self._post_text(action, inputs, referer_path="/login.do")
+        await self._post_text(action, inputs, referer_path=API_PATH_LOGIN)
 
         status = await self.fetch_rent_status()
         login = str(status.get("loginYn") or "").strip().upper()
@@ -281,12 +297,11 @@ class SeoulPublicBikeSiteApi:
         return f"{self.BASE}/{href.lstrip('./')}"
 
     async def fetch_use_history_html(self) -> str:
-        path = "/app/mybike/getMemberUseHistory.do"
-        return await self._get_text(path, referer_path=path)
+        return await self._get_text(API_PATH_USE_HISTORY, referer_path=API_PATH_USE_HISTORY)
 
     async def fetch_rent_status(self) -> dict[str, Any]:
         last_exc: Exception | None = None
-        for path in ("/app/rentCheck/isChkRentStatus.do", "/app/rent/isChkRentStatus.do"):
+        for path in (API_PATH_RENT_STATUS, API_PATH_RENT_STATUS_ALT):
             try:
                 return await self._get_json(path, referer_path=path)
             except Exception as err:
@@ -296,32 +311,32 @@ class SeoulPublicBikeSiteApi:
         return {}
 
     async def fetch_user_status(self) -> dict[str, Any]:
-        return await self._get_json("/app/rent/chkUserSataus.do", referer_path="/app/rent/chkUserSataus.do")
+        return await self._get_json(API_PATH_USER_STATUS, referer_path=API_PATH_USER_STATUS)
 
     async def fetch_reconsent_status(self) -> dict[str, Any]:
-        return await self._get_json("/checkReconsentAjax.do", referer_path="/")
+        return await self._get_json(API_PATH_RECONSENT, referer_path="/")
 
     async def fetch_move_route(self, rent_hist_seq: str | None) -> dict[str, Any]:
         if not rent_hist_seq:
             return {}
         return await self._post_json(
-            "/app/mybike/getHistoryMoveRoute.do",
+            API_PATH_MOVE_ROUTE,
             data={"rentHistSeq": str(rent_hist_seq)},
-            referer_path="/app/mybike/getMemberUseHistory.do",
+            referer_path=API_PATH_USE_HISTORY,
         )
 
     async def fetch_voucher_info(self) -> dict[str, Any]:
         return await self._post_json(
-            "/app/mybike/coupon/validChkVoucherAjax.do",
+            API_PATH_VOUCHER_INFO,
             data={},
             referer_path="/app/mybike/coupon/validChkVoucher.do",
         )
 
     async def fetch_left_page_html(self) -> str:
-        return await self._get_text("/myLeftPage.do", referer_path="/myLeftPage.do")
+        return await self._get_text(API_PATH_LEFT_PAGE, referer_path=API_PATH_LEFT_PAGE)
 
     async def fetch_favorites_html(self) -> str:
-        return await self._get_text("/app/mybike/favoriteStation.do", referer_path="/app/mybike/favoriteStation.do")
+        return await self._get_text(API_PATH_FAVORITES, referer_path=API_PATH_FAVORITES)
 
     async def fetch_station_realtime_html(self, station_id: str | None, station_no: str | None) -> str:
         """
@@ -331,19 +346,19 @@ class SeoulPublicBikeSiteApi:
         tries: list[tuple[dict | None, str | None]] = []
 
         if station_id:
-            tries.append(({"stationId": station_id}, "/app/mybike/favoriteStation.do"))
+            tries.append(({"stationId": station_id}, API_PATH_FAVORITES))
         if station_no:
-            tries.append(({"stationNo": station_no}, "/app/mybike/favoriteStation.do"))
+            tries.append(({"stationNo": station_no}, API_PATH_FAVORITES))
         if station_id and station_no:
-            tries.append(({"stationId": station_id, "stationNo": station_no}, "/app/mybike/favoriteStation.do"))
+            tries.append(({"stationId": station_id, "stationNo": station_no}, API_PATH_FAVORITES))
 
         # 마지막 fallback: 파라미터 없이
-        tries.append((None, "/app/mybike/favoriteStation.do"))
+        tries.append((None, API_PATH_FAVORITES))
 
         last_exc: Exception | None = None
         for params, ref in tries:
             try:
-                return await self._get_text("/app/station/moveStationRealtimeStatus.do", params=params, referer_path=ref)
+                return await self._get_text(API_PATH_STATION_REALTIME, params=params, referer_path=ref)
             except Exception as e:
                 last_exc = e
 
@@ -421,9 +436,9 @@ class SeoulPublicBikeSiteApi:
 
         try:
             data = await self._get_json(
-                "/app/station/moveStationRealtimeStatus.do",
+                API_PATH_STATION_REALTIME,
                 params=params,
-                referer_path="/app/mybike/favoriteStation.do",
+                referer_path=API_PATH_FAVORITES,
             )
             if data:
                 return data
@@ -436,9 +451,9 @@ class SeoulPublicBikeSiteApi:
 
     async def fetch_station_realtime_all(self) -> list[dict[str, Any]]:
         data = await self._post_json(
-            "/app/station/getStationRealtimeStatus.do",
+            API_PATH_STATION_REALTIME_ALL,
             data={"stationGrpSeq": "ALL"},
-            referer_path="/app/station/getStationRealtimeStatus.do",
+            referer_path=API_PATH_STATION_REALTIME_ALL,
         )
         if isinstance(data, dict):
             items = data.get("realtimeList") or data.get("list") or data.get("data")
