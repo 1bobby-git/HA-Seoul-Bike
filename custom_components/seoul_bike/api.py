@@ -94,7 +94,8 @@ class SeoulPublicBikeSiteApi:
 
     def _headers_json(self, referer_path: str | None = None) -> dict[str, str]:
         h = self._headers(referer_path)
-        h["Accept"] = "application/json, text/plain, */*"
+        h["Accept"] = "application/json, text/javascript, */*; q=0.01"
+        h["X-Requested-With"] = "XMLHttpRequest"
         return h
 
     def _cookie_header_from_session(self) -> str:
@@ -452,7 +453,7 @@ class SeoulPublicBikeSiteApi:
     async def fetch_station_realtime_all(self) -> list[dict[str, Any]]:
         data = await self._post_json(
             API_PATH_STATION_REALTIME_ALL,
-            data={"stationGrpSeq": "ALL"},
+            data={"stationGrpSeq": "ALL", "tabId": ""},
             referer_path=API_PATH_STATION_REALTIME_ALL,
         )
         if isinstance(data, dict):

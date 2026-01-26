@@ -647,23 +647,28 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         lon = _to_float(status.get("stationLongitude")) or 0.0
 
         bikes_total = _to_int(status.get("parkingBikeTotCnt"))
-        bikes_general = _to_int(status.get("parkingBikeTotCntGeneral"), 0)
-        bikes_sprout = _to_int(status.get("parkingBikeTotCntTeen"), 0)
         bikes_qr = _to_int(status.get("parkingQRBikeCnt"), 0)
         bikes_elec = _to_int(status.get("parkingELECBikeCnt"), 0)
+        bikes_general = _to_int(status.get("parkingBikeTotCntGeneral"), 0)
+        bikes_sprout = _to_int(status.get("parkingBikeTotCntTeen"), 0)
         bikes_repair = _to_int(status.get("parkingBikeTotCntRepair"), 0)
 
+        # 일반 자전거: parkingQRBikeCnt가 실제 QR 일반 자전거 수
+        # parkingBikeTotCntGeneral은 API에서 0 또는 미반환될 수 있음
         if bikes_general <= 0:
-            bikes_general = _to_int(status.get("parkingBikeTotCnt"), 0)
-        if bikes_qr > 0:
-            bikes_general += bikes_qr
-        if bikes_sprout <= 0 and bikes_elec > 0:
+            bikes_general = bikes_qr
+
+        # 새싹(전기) 자전거: parkingELECBikeCnt가 실제 전기 자전거 수
+        if bikes_sprout <= 0:
             bikes_sprout = bikes_elec
 
+        # 총합: parkingBikeTotCnt가 있으면 사용, 없으면 QR + ELEC
         if bikes_total <= 0:
             bikes_total = _to_int(status.get("bikes_total"))
         if bikes_total <= 0:
             bikes_total = max(0, bikes_general + bikes_sprout)
+
+        # 최종 fallback (이전 데이터 형식 호환)
         if bikes_general <= 0:
             bikes_general = _to_int(status.get("bikes_general"), bikes_total)
         if bikes_sprout <= 0:
