@@ -28,6 +28,10 @@ API_PATH_STATION_REALTIME_ALL: Final = "/app/station/getStationRealtimeStatus.do
 # ----------------------------
 DEFAULT_SCAN_INTERVAL_SECONDS: Final = 60
 
+# 3-Tier 업데이트 전략 간격
+TIER2_INTERVAL_SECONDS: Final = 300     # 5분 - 이용내역, 즐겨찾기
+TIER3_INTERVAL_SECONDS: Final = 1800    # 30분 - 이용권, 사용자 상태
+
 CONF_COOKIE = "cookie"
 CONF_COOKIE_USERNAME = "cookie_username"
 CONF_COOKIE_PASSWORD = "cookie_password"
@@ -37,7 +41,7 @@ CONF_LOCATION_ENTITY = "location_entity"
 CONF_RADIUS_M = "radius_m"
 CONF_MAX_RESULTS = "max_results"
 CONF_MIN_BIKES = "min_bikes"
-DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS = 120
+DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS = 60
 DEFAULT_RADIUS_M = 500
 DEFAULT_MAX_RESULTS = 5
 DEFAULT_MIN_BIKES = 1

@@ -6,6 +6,7 @@ import asyncio
 import calendar
 import logging
 import re
+import time
 from dataclasses import dataclass
 from datetime import date, timedelta, datetime
 from math import asin, cos, radians, sin, sqrt
@@ -36,6 +37,8 @@ from .const import (
     DEFAULT_RADIUS_M,
     DEFAULT_SCAN_INTERVAL_SECONDS,
     DOMAIN,
+    TIER2_INTERVAL_SECONDS,
+    TIER3_INTERVAL_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -571,6 +574,11 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:
             update_interval_s = DEFAULT_COOKIE_UPDATE_INTERVAL_SECONDS
 
+        # 3-Tier 업데이트 전략 추적
+        self._last_tier2_update: float = 0.0  # Tier 2 마지막 갱신 시각 (monotonic)
+        self._last_tier3_update: float = 0.0  # Tier 3 마지막 갱신 시각 (monotonic)
+        self._prev_rent_key: str | None = None  # 이전 대여 상태 키 (변경 감지용)
+
         super().__init__(
             hass,
             logger=_LOGGER,
@@ -1032,7 +1040,30 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data["nearby_count"] = len(self.nearby)
             self.async_set_updated_data(data)
 
+    @staticmethod
+    def _make_rent_key(rent_status: dict[str, Any]) -> str:
+        """대여 상태에서 변경 감지용 키를 생성."""
+        if not rent_status:
+            return ""
+        parts = [
+            str(rent_status.get("rentBikeYn") or ""),
+            str(rent_status.get("rentDttm") or ""),
+            str(rent_status.get("rentStationName") or ""),
+        ]
+        return "|".join(parts)
+
     async def _async_update_data(self) -> dict[str, Any]:
+        """3-Tier 업데이트 전략.
+
+        Tier 1 (매 주기, 60초): rent_status + station_realtime_all
+          → 자전거 수량은 실시간으로 가장 중요
+        Tier 2 (5분 or 대여/반납 변경): use_history + move_route + favorites
+          → 대여/반납 시에만 변경되는 데이터
+        Tier 3 (30분): voucher + user_status + reconsent + left_page
+          → 거의 변하지 않는 데이터
+
+        이벤트 트리거: rent_status 변경 감지 시 Tier 2 즉시 실행
+        """
         try:
             self.last_error = None
             self.validation_status = "ok"
@@ -1066,10 +1097,15 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception:
                 self.min_bikes = DEFAULT_MIN_BIKES
 
+            now = time.monotonic()
+            prev_data = self.data or {}
+            first_run = not prev_data
+
+            # ═══════════════════════════════════════════
+            # TIER 1: 매 주기 (60초) - 로그인 + 실시간 대여소
+            # ═══════════════════════════════════════════
 
             rent_status: dict[str, Any] = {}
-            user_status: dict[str, Any] = {}
-            reconsent_status: dict[str, Any] = {}
             login_ok: bool | None = None
             username = str(self.entry.data.get(CONF_COOKIE_USERNAME) or "").strip()
             password = str(self.entry.data.get(CONF_COOKIE_PASSWORD) or "").strip()
@@ -1100,23 +1136,51 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 return {
                     "error": "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
                     "updated_at": datetime.now().isoformat(),
-                    "periods": {},
-                    "ticket_expiry": None,
-                    "my_page": {},
-                    "favorites": [],
-                    "favorite_status": {},
+                    "periods": prev_data.get("periods", {}),
+                    "ticket_expiry": prev_data.get("ticket_expiry"),
+                    "my_page": prev_data.get("my_page", {}),
+                    "favorites": prev_data.get("favorites", []),
+                    "favorite_status": prev_data.get("favorite_status", {}),
                     "rent_status": rent_status,
-                    "user_status": user_status,
-                    "reconsent_status": reconsent_status,
+                    "user_status": prev_data.get("user_status", {}),
+                    "reconsent_status": prev_data.get("reconsent_status", {}),
                     "validation_status": self.validation_status,
                     "last_request": {
                         "url": self.last_request_url,
                         "http_status": self.last_http_status,
                         "error": self.last_error,
                     },
+                    "nearby_count": len(self.nearby),
+                    "station_count": len(self.stations_by_id),
                 }
 
-            if login_ok is not False:
+            # 대여/반납 상태 변경 감지 → Tier 2 이벤트 트리거
+            rent_key = self._make_rent_key(rent_status)
+            rent_changed = (
+                self._prev_rent_key is not None
+                and rent_key != self._prev_rent_key
+            )
+            self._prev_rent_key = rent_key
+            if rent_changed:
+                _LOGGER.info("[SeoulBike] 대여/반납 상태 변경 감지 → Tier 2 즉시 갱신")
+
+            # Tier 판단
+            need_tier2 = first_run or rent_changed or (now - self._last_tier2_update) >= TIER2_INTERVAL_SECONDS
+            need_tier3 = first_run or (now - self._last_tier3_update) >= TIER3_INTERVAL_SECONDS
+
+            if need_tier2:
+                _LOGGER.debug("[SeoulBike] Tier 2 갱신: 이용내역/즐겨찾기")
+            if need_tier3:
+                _LOGGER.debug("[SeoulBike] Tier 3 갱신: 사용자/이용권 정보")
+
+            # ═══════════════════════════════════════════
+            # TIER 3: 30분 주기 - 사용자 상태, 이용권 정보
+            # ═══════════════════════════════════════════
+
+            user_status: dict[str, Any] = prev_data.get("user_status", {})
+            reconsent_status: dict[str, Any] = prev_data.get("reconsent_status", {})
+
+            if need_tier3 and login_ok is not False:
                 try:
                     user_status = await self._api.fetch_user_status()
                 except Exception as err:
@@ -1126,57 +1190,71 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 except Exception as err:
                     reconsent_status = {"error": str(err)}
 
-            base_html = await self._api.fetch_use_history_html()
-            period_html: dict[str, str] = {"history": base_html}
-
-            if period_html and all(_looks_like_login(h) for h in period_html.values()):
-                self.validation_status = "login_page"
-                self.last_error = "login_page"
-                self._sync_last_request_meta()
-                return {
-                    "error": "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
-                    "updated_at": datetime.now().isoformat(),
-                    "periods": {},
-                    "ticket_expiry": None,
-                    "my_page": {},
-                    "favorites": [],
-                    "favorite_status": {},
-                    "rent_status": rent_status,
-                    "user_status": user_status,
-                    "reconsent_status": reconsent_status,
-                    "validation_status": self.validation_status,
-                    "last_request": {
-                        "url": self.last_request_url,
-                        "http_status": self.last_http_status,
-                        "error": self.last_error,
-                    },
-                }
+            # ═══════════════════════════════════════════
+            # TIER 2: 5분 주기 or 이벤트 - 이용내역, 즐겨찾기
+            # ═══════════════════════════════════════════
 
             updated_at = datetime.now().isoformat()
-            periods: dict[str, Any] = {}
-            if "history" in period_html:
-                payload = _parse_use_history(period_html["history"])
-                payload = _merge_latest_history(payload, (self.data or {}).get("periods", {}).get("history", {}))
-                if not payload.get("period_start") or not payload.get("period_end"):
-                    start, end = _history_range("history")
-                    payload["period_start"] = start
-                    payload["period_end"] = end
-                payload["updated_at"] = updated_at
-                periods["history"] = payload
+            periods: dict[str, Any] = dict(prev_data.get("periods", {}))
+            favorites = prev_data.get("favorites", [])
 
-            for pdata in periods.values():
-                hist = pdata.get("history") or []
-                hist_id = None
-                if isinstance(hist, list) and hist:
-                    hist_id = (hist[0] or {}).get("history_id")
-                if hist_id:
-                    try:
-                        pdata["move_route"] = await self._api.fetch_move_route(str(hist_id))
-                    except Exception as err:
-                        pdata["move_route"] = {"error": str(err)}
+            if need_tier2:
+                base_html = await self._api.fetch_use_history_html()
+                period_html: dict[str, str] = {"history": base_html}
 
-            fav_html = await self._api.fetch_favorites_html()
-            favorites = [] if _looks_like_login(fav_html) else _extract_favorites_with_counts(fav_html)
+                if period_html and all(_looks_like_login(h) for h in period_html.values()):
+                    self.validation_status = "login_page"
+                    self.last_error = "login_page"
+                    self._sync_last_request_meta()
+                    return {
+                        "error": "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
+                        "updated_at": updated_at,
+                        "periods": {},
+                        "ticket_expiry": None,
+                        "my_page": {},
+                        "favorites": [],
+                        "favorite_status": {},
+                        "rent_status": rent_status,
+                        "user_status": user_status,
+                        "reconsent_status": reconsent_status,
+                        "validation_status": self.validation_status,
+                        "last_request": {
+                            "url": self.last_request_url,
+                            "http_status": self.last_http_status,
+                            "error": self.last_error,
+                        },
+                    }
+
+                periods = {}
+                if "history" in period_html:
+                    payload = _parse_use_history(period_html["history"])
+                    payload = _merge_latest_history(payload, prev_data.get("periods", {}).get("history", {}))
+                    if not payload.get("period_start") or not payload.get("period_end"):
+                        start, end = _history_range("history")
+                        payload["period_start"] = start
+                        payload["period_end"] = end
+                    payload["updated_at"] = updated_at
+                    periods["history"] = payload
+
+                for pdata in periods.values():
+                    hist = pdata.get("history") or []
+                    hist_id = None
+                    if isinstance(hist, list) and hist:
+                        hist_id = (hist[0] or {}).get("history_id")
+                    if hist_id:
+                        try:
+                            pdata["move_route"] = await self._api.fetch_move_route(str(hist_id))
+                        except Exception as err:
+                            pdata["move_route"] = {"error": str(err)}
+
+                fav_html = await self._api.fetch_favorites_html()
+                favorites = [] if _looks_like_login(fav_html) else _extract_favorites_with_counts(fav_html)
+
+                self._last_tier2_update = now
+
+            # ═══════════════════════════════════════════
+            # TIER 1 (계속): 실시간 대여소 데이터
+            # ═══════════════════════════════════════════
 
             realtime_list: list[dict[str, Any]] = []
             realtime_by_id: dict[str, dict[str, Any]] = {}
@@ -1196,44 +1274,62 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if station_no:
                     realtime_by_no[station_no] = item
 
+            # ═══════════════════════════════════════════
+            # TIER 3 (계속): 이용권 정보
+            # ═══════════════════════════════════════════
+
             realtime_voucher_end = _extract_voucher_end_from_realtime(realtime_list)
-            prev_my_page = (self.data or {}).get("my_page") or {}
+            prev_my_page = prev_data.get("my_page") or {}
+            my_page = dict(prev_my_page)
+            ticket_expiry_iso = prev_data.get("ticket_expiry")
             voucher_payload: dict[str, Any] = {}
-            need_voucher_api = (
-                not realtime_voucher_end
-                or not prev_my_page.get("reg_dttm")
-                or not prev_my_page.get("last_login_dttm")
-            )
-            if need_voucher_api:
-                try:
-                    voucher_payload = await self._api.fetch_voucher_info()
-                except Exception as err:
-                    voucher_payload = {"error": str(err)}
-                voucher_info = _extract_voucher_info(voucher_payload)
-            else:
-                voucher_info = {
-                    "voucher_end_dttm": None,
-                    "reg_dttm": prev_my_page.get("reg_dttm"),
-                    "last_login_dttm": prev_my_page.get("last_login_dttm"),
-                }
-            if realtime_voucher_end:
-                voucher_info["voucher_end_dttm"] = realtime_voucher_end
-            if not voucher_info.get("reg_dttm") and prev_my_page.get("reg_dttm"):
-                voucher_info["reg_dttm"] = prev_my_page.get("reg_dttm")
-            if not voucher_info.get("last_login_dttm") and prev_my_page.get("last_login_dttm"):
-                voucher_info["last_login_dttm"] = prev_my_page.get("last_login_dttm")
 
-            ticket_expiry_iso = voucher_info.get("voucher_end_dttm")
-            if not ticket_expiry_iso:
-                left_html = await self._api.fetch_left_page_html()
-                ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
-                ticket_expiry_iso = ticket_expiry.isoformat() if ticket_expiry else None
+            if need_tier3:
+                need_voucher_api = (
+                    not realtime_voucher_end
+                    or not prev_my_page.get("reg_dttm")
+                    or not prev_my_page.get("last_login_dttm")
+                )
+                if need_voucher_api:
+                    try:
+                        voucher_payload = await self._api.fetch_voucher_info()
+                    except Exception as err:
+                        voucher_payload = {"error": str(err)}
+                    voucher_info = _extract_voucher_info(voucher_payload)
+                else:
+                    voucher_info = {
+                        "voucher_end_dttm": None,
+                        "reg_dttm": prev_my_page.get("reg_dttm"),
+                        "last_login_dttm": prev_my_page.get("last_login_dttm"),
+                    }
+                if realtime_voucher_end:
+                    voucher_info["voucher_end_dttm"] = realtime_voucher_end
+                if not voucher_info.get("reg_dttm") and prev_my_page.get("reg_dttm"):
+                    voucher_info["reg_dttm"] = prev_my_page.get("reg_dttm")
+                if not voucher_info.get("last_login_dttm") and prev_my_page.get("last_login_dttm"):
+                    voucher_info["last_login_dttm"] = prev_my_page.get("last_login_dttm")
 
-            my_page = dict(voucher_info)
-            if "error" in voucher_payload:
-                my_page["error"] = voucher_payload.get("error")
-            my_page["voucher_end_dttm"] = ticket_expiry_iso
-            my_page["updated_at"] = updated_at
+                ticket_expiry_iso = voucher_info.get("voucher_end_dttm")
+                if not ticket_expiry_iso:
+                    left_html = await self._api.fetch_left_page_html()
+                    ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
+                    ticket_expiry_iso = ticket_expiry.isoformat() if ticket_expiry else None
+
+                my_page = dict(voucher_info)
+                if "error" in voucher_payload:
+                    my_page["error"] = voucher_payload.get("error")
+                my_page["voucher_end_dttm"] = ticket_expiry_iso
+                my_page["updated_at"] = updated_at
+
+                self._last_tier3_update = now
+            elif realtime_voucher_end:
+                # Tier 3 미실행이어도 realtime에서 이용권 만료일 업데이트
+                my_page["voucher_end_dttm"] = realtime_voucher_end
+                ticket_expiry_iso = realtime_voucher_end
+
+            # ═══════════════════════════════════════════
+            # TIER 1 (계속): 즐겨찾기 상태 + 대여소 조립 + 주변
+            # ═══════════════════════════════════════════
 
             favorite_status: dict[str, Any] = {}
             for f in favorites:
@@ -1303,7 +1399,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "periods": periods,
                 "ticket_expiry": ticket_expiry_iso,
                 "my_page": my_page,
-                "favorites": favorites,          # counts 포함
+                "favorites": favorites,
                 "favorite_status": favorite_status,
                 "rent_status": rent_status,
                 "user_status": user_status,
