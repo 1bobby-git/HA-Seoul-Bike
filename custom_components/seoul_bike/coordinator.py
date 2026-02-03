@@ -313,53 +313,10 @@ def _extract_voucher_info(payload: dict[str, Any]) -> dict[str, str | None]:
     if not isinstance(data, dict):
         data = payload
     voucher_end = data.get("voucherEndDttm") or payload.get("voucherEndDttm")
-
-    # 가입일: 다양한 키 이름 시도
-    reg_dttm = (
-        data.get("regDttm") or payload.get("regDttm")
-        or data.get("reg_dttm") or payload.get("reg_dttm")
-        or data.get("joinDttm") or payload.get("joinDttm")
-        or data.get("createDttm") or payload.get("createDttm")
-    )
-
-    # 마지막 로그인: 다양한 키 이름 시도
-    last_login = (
-        data.get("lastLoginDttm") or payload.get("lastLoginDttm")
-        or data.get("last_login_dttm") or payload.get("last_login_dttm")
-        or data.get("loginDttm") or payload.get("loginDttm")
-        or data.get("lastAccessDttm") or payload.get("lastAccessDttm")
-    )
+    reg_dttm = data.get("regDttm") or payload.get("regDttm")
+    last_login = data.get("lastLoginDttm") or payload.get("lastLoginDttm")
     return {
         "voucher_end_dttm": _parse_datetime_value(voucher_end),
-        "reg_dttm": _parse_datetime_value(reg_dttm),
-        "last_login_dttm": _parse_datetime_value(last_login),
-    }
-
-
-def _extract_user_dates(user_status: dict[str, Any]) -> dict[str, str | None]:
-    """user_status API에서 가입일/마지막 로그인 추출."""
-    if not isinstance(user_status, dict):
-        return {"reg_dttm": None, "last_login_dttm": None}
-
-    # 가입일: 다양한 키 이름 시도
-    reg_dttm = (
-        user_status.get("regDttm")
-        or user_status.get("reg_dttm")
-        or user_status.get("joinDttm")
-        or user_status.get("createDttm")
-        or user_status.get("registDt")
-        or user_status.get("joinDt")
-    )
-
-    # 마지막 로그인: 다양한 키 이름 시도
-    last_login = (
-        user_status.get("lastLoginDttm")
-        or user_status.get("last_login_dttm")
-        or user_status.get("loginDttm")
-        or user_status.get("lastAccessDttm")
-        or user_status.get("lastLoginDt")
-    )
-    return {
         "reg_dttm": _parse_datetime_value(reg_dttm),
         "last_login_dttm": _parse_datetime_value(last_login),
     }
@@ -1278,7 +1235,6 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if need_tier3 and login_ok is not False:
                 try:
                     user_status = await self._api.fetch_user_status()
-                    _LOGGER.debug("[SeoulBike] user_status API 응답: %s", user_status)
                 except Exception as err:
                     user_status = {"error": str(err)}
                 try:
@@ -1381,11 +1337,9 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 if need_voucher_api:
                     try:
                         voucher_payload = await self._api.fetch_voucher_info()
-                        _LOGGER.debug("[SeoulBike] voucher_info API 응답: %s", voucher_payload)
                     except Exception as err:
                         voucher_payload = {"error": str(err)}
                     voucher_info = _extract_voucher_info(voucher_payload)
-                    _LOGGER.debug("[SeoulBike] 추출된 voucher_info: %s", voucher_info)
                 else:
                     voucher_info = {
                         "voucher_end_dttm": None,
@@ -1394,15 +1348,6 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     }
                 if realtime_voucher_end:
                     voucher_info["voucher_end_dttm"] = realtime_voucher_end
-
-                # user_status에서도 가입일/마지막 로그인 추출 시도
-                if not voucher_info.get("reg_dttm") or not voucher_info.get("last_login_dttm"):
-                    user_dates = _extract_user_dates(user_status)
-                    if not voucher_info.get("reg_dttm") and user_dates.get("reg_dttm"):
-                        voucher_info["reg_dttm"] = user_dates.get("reg_dttm")
-                    if not voucher_info.get("last_login_dttm") and user_dates.get("last_login_dttm"):
-                        voucher_info["last_login_dttm"] = user_dates.get("last_login_dttm")
-
                 if not voucher_info.get("reg_dttm") and prev_my_page.get("reg_dttm"):
                     voucher_info["reg_dttm"] = prev_my_page.get("reg_dttm")
                 if not voucher_info.get("last_login_dttm") and prev_my_page.get("last_login_dttm"):

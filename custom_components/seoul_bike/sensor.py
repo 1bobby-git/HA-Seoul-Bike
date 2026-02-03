@@ -870,8 +870,7 @@ class FavoriteStationIdSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], Sen
 
     def __init__(self, coordinator: SeoulPublicBikeCoordinator, station_id: str, station_name: str) -> None:
         super().__init__(coordinator)
-        # station_id는 실제로 station_no (즐겨찾기 키)
-        self._station_no = station_id
+        self._station_id = station_id
         self._station_name = station_name
         self._attr_name = "정류소 ID"
         self._attr_unique_id = f"{coordinator.entry.entry_id}_fav_{station_id}_station_id"
@@ -891,8 +890,8 @@ class FavoriteStationIdSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], Sen
         # favorite_status에서 실시간 API의 stationId(ST-xxx) 가져오기
         data = self.coordinator.data or {}
         fav_status = data.get("favorite_status") or {}
-        status = fav_status.get(self._station_no) or {}
-        return status.get("station_id") or self._station_no
+        status = fav_status.get(self._station_id) or {}
+        return status.get("station_id") or self._station_id
 
 
 class FavoriteStationDistanceSensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):
