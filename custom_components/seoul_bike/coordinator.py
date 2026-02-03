@@ -454,13 +454,11 @@ def _extract_favorites_with_counts(fav_html: str) -> list[dict[str, Any]]:
         normal = int(cm.group(1)) if cm else None
         sprout = int(cm.group(2)) if cm else None
 
-        # station_id가 HTML에 없으므로 station_no를 기반으로 생성
-        # 실시간 API에서는 stationName으로 매칭하므로 station_no만 있어도 됨
-        station_id = f"FAV-{station_no}"
-
+        # station_id는 실시간 API 매칭 후 업데이트됨 (일단 station_no 사용)
+        # 실시간 API의 stationId는 보통 ST-xxx 또는 숫자 형식
         out.append(
             {
-                "station_id": station_id,
+                "station_id": station_no,  # 임시값, 실시간 매칭 후 업데이트
                 "station_name": station_name,
                 "station_no": station_no,
                 "normal": normal,
@@ -986,8 +984,11 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             data = dict(self.data or {})
             favorites = data.get("favorites") or []
             target = None
+            # station_id 또는 station_no로 매칭
             for f in favorites:
-                if (f.get("station_id") or "").strip() == station_id:
+                f_sid = str(f.get("station_id") or "").strip()
+                f_sno = str(f.get("station_no") or "").strip()
+                if f_sid == station_id or f_sno == station_id:
                     target = f
                     break
             if not target:
@@ -1002,9 +1003,14 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             realtime_by_id, realtime_by_no = _build_realtime_lookups(realtime_list)
 
-            sid = str(target.get("station_id") or "").strip()
             sno = str(target.get("station_no") or "").strip()
-            status = realtime_by_id.get(sid.upper()) or (realtime_by_no.get(sno) if sno else None)
+            sid = str(target.get("station_id") or sno).strip()
+
+            # 실시간 API 매칭: station_no로 먼저 시도
+            status = realtime_by_no.get(sno) if sno else None
+            if not status and sid:
+                status = realtime_by_id.get(sid.upper())
+
             normal = target.get("normal")
             sprout = target.get("sprout")
             lat = target.get("lat")
@@ -1012,16 +1018,19 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if status:
                 st = self._station_from_status(status, sid, sno, target.get("station_name"))
                 if st:
+                    sid = st.station_id or sid
                     normal = st.bikes_general
                     sprout = st.bikes_sprout
                     lat = st.lat
                     lon = st.lon
 
+            # unique key로 station_no 사용
+            key = sno or sid
             favorite_status = dict(data.get("favorite_status") or {})
-            favorite_status[sid] = {
+            favorite_status[key] = {
                 "station_id": sid,
                 "station_name": target.get("station_name"),
-                "station_no": target.get("station_no"),
+                "station_no": sno,
                 "normal": normal,
                 "sprout": sprout,
                 "lat": lat,
@@ -1363,24 +1372,36 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             favorite_status: dict[str, Any] = {}
             for f in favorites:
-                sid = f.get("station_id") or ""
-                sno = f.get("station_no") or ""
+                sno = str(f.get("station_no") or "").strip()
+                # station_id: 실시간 API에서 가져오거나, station_no 사용
+                sid = str(f.get("station_id") or sno).strip()
                 normal = f.get("normal")
                 sprout = f.get("sprout")
                 lat = None
                 lon = None
-                status = realtime_by_id.get(str(sid).upper()) or (realtime_by_no.get(str(sno)) if sno else None)
+
+                # 실시간 API 매칭: station_no로 먼저 시도 (가장 정확)
+                status = realtime_by_no.get(sno) if sno else None
+                # fallback: station_id로 시도 (ST-xxx 형식인 경우)
+                if not status and sid:
+                    status = realtime_by_id.get(sid.upper())
+
                 if status:
-                    st = self._station_from_status(status, str(sid), str(sno), f.get("station_name"))
+                    st = self._station_from_status(status, sid, sno, f.get("station_name"))
                     if st:
+                        # 실시간 API에서 실제 stationId를 가져옴
+                        sid = st.station_id or sid
                         normal = st.bikes_general
                         sprout = st.bikes_sprout
                         lat = st.lat
                         lon = st.lon
-                favorite_status[sid] = {
+
+                # unique key로 station_no 사용 (일관성)
+                key = sno or sid
+                favorite_status[key] = {
                     "station_id": sid,
                     "station_name": f.get("station_name"),
-                    "station_no": f.get("station_no"),
+                    "station_no": sno,
                     "normal": normal,
                     "sprout": sprout,
                     "lat": lat,
