@@ -539,6 +539,37 @@ def _fallback_station(
                 return st
     return None
 
+
+def _build_realtime_lookups(
+    realtime_list: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """실시간 대여소 목록에서 ID/번호 인덱스 생성.
+
+    stationNo 필드가 없으면 stationName에서 번호를 추출한다.
+    예: "3685. 강동리엔파크14단지(1401동 앞)" → station_no = "3685"
+    """
+    realtime_by_id: dict[str, dict[str, Any]] = {}
+    realtime_by_no: dict[str, dict[str, Any]] = {}
+
+    for item in realtime_list:
+        # stationId 인덱싱
+        sid = str(item.get("stationId") or "").strip().upper()
+        if sid:
+            realtime_by_id[sid] = item
+
+        # stationNo 인덱싱: 필드 우선, 없으면 stationName에서 추출
+        station_no = str(item.get("stationNo") or "").strip()
+        if not station_no:
+            station_name = str(item.get("stationName") or "").strip()
+            if station_name:
+                m_no = _STATION_NO_RE.match(station_name)
+                if m_no:
+                    station_no = m_no.group(1)
+        if station_no:
+            realtime_by_no[station_no] = item
+
+    return realtime_by_id, realtime_by_no
+
 class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -951,15 +982,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 realtime_list = []
             self._sync_last_request_meta()
 
-            realtime_by_id: dict[str, dict[str, Any]] = {}
-            realtime_by_no: dict[str, dict[str, Any]] = {}
-            for item in realtime_list:
-                sid = str(item.get("stationId") or "").strip().upper()
-                if sid:
-                    realtime_by_id[sid] = item
-                station_no = str(item.get("stationNo") or "").strip()
-                if station_no:
-                    realtime_by_no[station_no] = item
+            realtime_by_id, realtime_by_no = _build_realtime_lookups(realtime_list)
 
             sid = str(target.get("station_id") or "").strip()
             sno = str(target.get("station_no") or "").strip()
@@ -1008,15 +1031,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 realtime_list = []
             self._sync_last_request_meta()
 
-            realtime_by_id: dict[str, dict[str, Any]] = {}
-            realtime_by_no: dict[str, dict[str, Any]] = {}
-            for item in realtime_list:
-                sid = str(item.get("stationId") or "").strip().upper()
-                if sid:
-                    realtime_by_id[sid] = item
-                station_no = str(item.get("stationNo") or "").strip()
-                if station_no:
-                    realtime_by_no[station_no] = item
+            realtime_by_id, realtime_by_no = _build_realtime_lookups(realtime_list)
 
             prev = dict(self.stations_by_id)
             fallback = prev.get(station_id)
@@ -1262,8 +1277,6 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # ═══════════════════════════════════════════
 
             realtime_list: list[dict[str, Any]] = []
-            realtime_by_id: dict[str, dict[str, Any]] = {}
-            realtime_by_no: dict[str, dict[str, Any]] = {}
             if self.station_ids or favorites or self.location_entity_id:
                 try:
                     realtime_list = await self._api.fetch_station_realtime_all()
@@ -1271,13 +1284,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.debug("Station realtime list fetch failed: %s", err)
                     realtime_list = []
 
-            for item in realtime_list:
-                sid = str(item.get("stationId") or "").strip().upper()
-                if sid:
-                    realtime_by_id[sid] = item
-                station_no = str(item.get("stationNo") or "").strip()
-                if station_no:
-                    realtime_by_no[station_no] = item
+            realtime_by_id, realtime_by_no = _build_realtime_lookups(realtime_list)
 
             # ═══════════════════════════════════════════
             # TIER 3 (계속): 이용권 정보
