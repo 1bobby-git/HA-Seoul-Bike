@@ -375,67 +375,77 @@ def _extract_period_range(html: str) -> tuple[str | None, str | None]:
 
 def _extract_favorites_with_counts(fav_html: str) -> list[dict[str, Any]]:
     """
-    favoriteStation.do 마크업에서:
-    - moveRentalStation('ST-xxxx', '대여소명')
-    - <div class="bike">일반 / 새싹<p>12 / 0</p></div>
-    를 같은 <li> 안에서 함께 파싱한다.
+    favoriteStation.do 마크업에서 즐겨찾기 대여소 정보 추출.
+
+    실제 HTML 구조 (2024년 기준):
+    <li>
+        <div class="place"><strong>3690. 강일역 4번출구</strong></div>
+        <div class="bike">일반 / 새싹<p>11 / 0</p></div>
+        <button onclick="delFavoriteFnc('1675074')">...</button>
+    </li>
+
+    station_id는 HTML에 없으므로 station_no를 station_id로도 사용.
     """
     if not fav_html:
         return []
 
+    # #favoriteList 내의 ul > li 요소들 추출
     lis = re.findall(r"<li\b[^>]*>(.*?)</li>", fav_html, flags=re.DOTALL | re.IGNORECASE)
     out: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[str] = set()
 
     for li in lis:
-        station_id = ""
         station_name = ""
+        station_no = ""
 
-        m_anchor = re.search(
-            r'<div[^>]*class=["\'][^"\']*\bplace\b[^"\']*["\'][^>]*>.*?<a[^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+        # 방법 1: <div class="place"><strong>대여소명</strong></div> 패턴
+        m_place = re.search(
+            r'<div[^>]*class=["\'][^"\']*\bplace\b[^"\']*["\'][^>]*>.*?<strong>(.*?)</strong>',
             li,
             flags=re.IGNORECASE | re.DOTALL,
         )
-        if not m_anchor:
-            m_anchor = re.search(
-                r'<a[^>]*class=["\'][^"\']*\bplace\b[^"\']*["\'][^>]*href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
-                li,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-        if not m_anchor:
-            m_anchor = re.search(
-                r'<a[^>]*href=["\']([^"\']*ST-[^"\']+)["\'][^>]*>(.*?)</a>',
-                li,
-                flags=re.IGNORECASE | re.DOTALL,
-            )
-        if m_anchor:
-            href = m_anchor.group(1) or ""
-            text = _strip_tags(m_anchor.group(2) or "")
-            m_st = re.search(r"(ST-\d+)", href, re.IGNORECASE)
-            if m_st:
-                station_id = m_st.group(1).upper()
-            if text:
-                station_name = text
+        if m_place:
+            station_name = _strip_tags(m_place.group(1) or "").strip()
 
-        if not station_id or not station_name:
-            m = re.search(
+        # 방법 2: <div class="place">대여소명</div> (strong 없는 경우)
+        if not station_name:
+            m_place2 = re.search(
+                r'<div[^>]*class=["\'][^"\']*\bplace\b[^"\']*["\'][^>]*>(.*?)</div>',
+                li,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            if m_place2:
+                station_name = _strip_tags(m_place2.group(1) or "").strip()
+
+        # 방법 3: moveRentalStation() 함수 (예전 방식 호환)
+        if not station_name:
+            m_func = re.search(
                 r"moveRentalStation\(\s*'([^']+)'\s*,\s*'([^']+)'\s*\)",
                 li,
                 flags=re.IGNORECASE,
             )
-            if m:
-                station_id = station_id or (m.group(1) or "").strip()
-                station_name = station_name or (m.group(2) or "").strip()
+            if m_func:
+                station_name = (m_func.group(2) or "").strip()
 
-        if not station_id or not station_name:
+        # station_name이 없으면 스킵
+        if not station_name:
             continue
 
-        key = (station_id, station_name)
-        if key in seen:
-            continue
-        seen.add(key)
+        # station_no 추출: "3690. 강일역 4번출구" → "3690"
+        m_no = re.match(r"^\s*(\d+)\s*[.)\-]", station_name)
+        if m_no:
+            station_no = m_no.group(1)
 
-        # counts: <div class="bike"> ... <p>12 / 0</p>
+        # station_no가 없으면 유효한 대여소가 아님
+        if not station_no:
+            continue
+
+        # 중복 체크 (station_no 기준)
+        if station_no in seen:
+            continue
+        seen.add(station_no)
+
+        # 자전거 수량: <div class="bike">일반 / 새싹<p>11 / 0</p></div>
         cm = re.search(
             r'<div[^>]*class=["\'][^"\']*\bbike\b[^"\']*["\'][^>]*>.*?<p>\s*(\d+)\s*/\s*(\d+)\s*</p>',
             li,
@@ -444,8 +454,9 @@ def _extract_favorites_with_counts(fav_html: str) -> list[dict[str, Any]]:
         normal = int(cm.group(1)) if cm else None
         sprout = int(cm.group(2)) if cm else None
 
-        m_no = re.match(r"^\s*(\d+)\.", station_name)
-        station_no = m_no.group(1) if m_no else ""
+        # station_id가 HTML에 없으므로 station_no를 기반으로 생성
+        # 실시간 API에서는 stationName으로 매칭하므로 station_no만 있어도 됨
+        station_id = f"FAV-{station_no}"
 
         out.append(
             {
@@ -455,6 +466,13 @@ def _extract_favorites_with_counts(fav_html: str) -> list[dict[str, Any]]:
                 "normal": normal,
                 "sprout": sprout,
             }
+        )
+
+    _LOGGER.debug("[SeoulBike] 즐겨찾기 파싱 결과: %d개 대여소", len(out))
+    for item in out:
+        _LOGGER.debug(
+            "[SeoulBike] - %s: %s (일반=%s, 새싹=%s)",
+            item["station_no"], item["station_name"], item["normal"], item["sprout"]
         )
 
     return out
