@@ -1,5 +1,7 @@
 # 서울자전거 따릉이 (Seoul Public Bike)
 
+
+> **Compatibility**: Home Assistant **2024.12+** 권장 (OptionsFlow / DeviceInfo / Coordinator API 정리 반영).
 이 커스텀 통합구성요소는 서울자전거 따릉이 정보를 Home Assistant에서 조회할 수 있도록 제공합니다.  
 현재 버전은 **로그인 방식(아이디/패스워드)** 으로만 동작하며, 로그인 후 생성된 쿠키를 내부에 저장해 비공식 API를 호출합니다.
 

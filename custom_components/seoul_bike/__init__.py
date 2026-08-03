@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
 from homeassistant.const import Platform
+from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.update_coordinator import UpdateFailed
 
@@ -40,14 +41,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = SeoulPublicBikeCoordinator(hass, entry)
     try:
         await coordinator.async_config_entry_first_refresh()
+    except ConfigEntryAuthFailed:
+        raise
     except UpdateFailed as err:
-        _LOGGER.warning("Cookie refresh failed during setup: %s", err)
-        return False
+        raise ConfigEntryNotReady(f"Seoul Bike refresh failed: {err}") from err
 
     if (coordinator.data or {}).get("error"):
-        _LOGGER.warning("Cookie validation failed during setup: %s", coordinator.data.get("error"))
-        _cleanup_cookie_entities(hass, entry)
-        return False
+        err_msg = str(coordinator.data.get("error"))
+        _LOGGER.warning("Cookie/login validation failed during setup: %s", err_msg)
+        # Transient network/login-page issues should retry; hard invalid credentials auth-fail.
+        if "login" in err_msg.lower() or "쿠키" in err_msg or "로그인" in err_msg:
+            raise ConfigEntryNotReady(err_msg)
+        raise ConfigEntryNotReady(err_msg)
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = coordinator
@@ -108,16 +113,3 @@ def _cleanup_legacy_use_history_devices(hass: HomeAssistant, entry: ConfigEntry)
             if ent.device_id == device.id:
                 ent_reg.async_remove(ent.entity_id)
         dev_reg.async_remove_device(device.id)
-
-
-def _cleanup_cookie_entities(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    ent_reg = er.async_get(hass)
-    dev_reg = dr.async_get(hass)
-
-    for ent in list(ent_reg.entities.values()):
-        if ent.config_entry_id == entry.entry_id:
-            ent_reg.async_remove(ent.entity_id)
-
-    for device in list(dev_reg.devices.values()):
-        if entry.entry_id in (device.config_entries or set()):
-            dev_reg.async_remove_device(device.id)

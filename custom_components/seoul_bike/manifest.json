@@ -1,14 +1,12 @@
 {
   "domain": "seoul_bike",
   "name": "서울자전거 따릉이 (Seoul Public Bike)",
-  "version": "1.2.7",
-  "documentation": "https://github.com/1bobby-git/HA-Seoul-Bike",
-  "issue_tracker": "https://github.com/1bobby-git/HA-Seoul-Bike/issues",
+  "codeowners": ["@1bobby-git"],
   "config_flow": true,
-  "requirements": [],
+  "documentation": "https://github.com/1bobby-git/HA-Seoul-Bike",
+  "integration_type": "service",
   "iot_class": "cloud_polling",
-  "codeowners": [
-    "@1bobby-git"
-  ],
-  "integration_type": "service"
+  "issue_tracker": "https://github.com/1bobby-git/HA-Seoul-Bike/issues",
+  "requirements": [],
+  "version": "1.3.0"
 }

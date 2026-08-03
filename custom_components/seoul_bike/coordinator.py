@@ -630,6 +630,7 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass,
             logger=_LOGGER,
             name=f"{DOMAIN}_{entry.entry_id}",
+            config_entry=entry,
             update_interval=timedelta(seconds=update_interval_s),
         )
 

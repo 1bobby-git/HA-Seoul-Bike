@@ -1,0 +1,7 @@
+{
+  "name": "서울자전거 따릉이 (Seoul Public Bike)",
+  "content_in_root": false,
+  "homeassistant": "2024.12.0",
+  "render_readme": true,
+  "zip_release": false
+}

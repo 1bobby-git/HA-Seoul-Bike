@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from typing import Any
 
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.helpers import selector
 
-from .const import DOMAIN
 from .api import SeoulPublicBikeSiteApi
 from .const import (
+    DOMAIN,
     CONF_COOKIE,
     CONF_COOKIE_PASSWORD,
     CONF_COOKIE_USERNAME,
@@ -33,10 +36,54 @@ async def _login_and_get_cookie(hass, username: str, password: str) -> str:
         return await api.login(username, password)
 
 
+def _user_schema(
+    defaults: dict[str, Any] | None = None,
+) -> vol.Schema:
+    defaults = defaults or {}
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_COOKIE_USERNAME,
+                default=str(defaults.get(CONF_COOKIE_USERNAME, "") or ""),
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT, autocomplete="username")
+            ),
+            vol.Required(
+                CONF_COOKIE_PASSWORD,
+                default=str(defaults.get(CONF_COOKIE_PASSWORD, "") or ""),
+            ): selector.TextSelector(
+                selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD, autocomplete="current-password")
+            ),
+            **(
+                {
+                    vol.Optional(
+                        CONF_LOCATION_ENTITY,
+                        default=str(defaults.get(CONF_LOCATION_ENTITY) or ""),
+                    ): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=["device_tracker", "person", "zone", "sensor"],
+                            multiple=False,
+                        )
+                    )
+                }
+                if str(defaults.get(CONF_LOCATION_ENTITY) or "").strip()
+                else {
+                    vol.Optional(CONF_LOCATION_ENTITY): selector.EntitySelector(
+                        selector.EntitySelectorConfig(
+                            domain=["device_tracker", "person", "zone", "sensor"],
+                            multiple=False,
+                        )
+                    )
+                }
+            ),
+        }
+    )
+
+
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
 
         if user_input is not None:
@@ -66,28 +113,30 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         },
                     )
 
-        schema = vol.Schema(
-            {
-                vol.Required(CONF_COOKIE_USERNAME, default=""): str,
-                vol.Required(CONF_COOKIE_PASSWORD, default=""): str,
-                vol.Optional(CONF_LOCATION_ENTITY, default=""): str,
-            }
+        return self.async_show_form(
+            step_id="user",
+            data_schema=_user_schema(),
+            errors=errors,
         )
-        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     @staticmethod
-    def async_get_options_flow(config_entry):
-        return OptionsFlowHandler(config_entry)
+    def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> config_entries.OptionsFlow:
+        return OptionsFlowHandler()
 
 
 class OptionsFlowHandler(config_entries.OptionsFlow):
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self._config_entry = config_entry
+    """Options flow using HA-provided self.config_entry."""
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        data = self._config_entry.data or {}
-        opts = self._config_entry.options or {}
+        data = self.config_entry.data or {}
+        opts = self.config_entry.options or {}
+
+        defaults = {
+            CONF_COOKIE_USERNAME: opts.get(CONF_COOKIE_USERNAME, data.get(CONF_COOKIE_USERNAME, "")),
+            CONF_COOKIE_PASSWORD: opts.get(CONF_COOKIE_PASSWORD, data.get(CONF_COOKIE_PASSWORD, "")),
+            CONF_LOCATION_ENTITY: opts.get(CONF_LOCATION_ENTITY, data.get(CONF_LOCATION_ENTITY, "")),
+        }
 
         if user_input is not None:
             username = (user_input.get(CONF_COOKIE_USERNAME) or "").strip()
@@ -110,7 +159,7 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                     new_data[CONF_LOCATION_ENTITY] = location_entity
 
                     self.hass.config_entries.async_update_entry(
-                        self._config_entry,
+                        self.config_entry,
                         data=new_data,
                         title=username,
                     )
@@ -120,20 +169,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
                         data={CONF_LOCATION_ENTITY: location_entity},
                     )
 
-        schema = vol.Schema(
-            {
-                vol.Required(
-                    CONF_COOKIE_USERNAME,
-                    default=str(opts.get(CONF_COOKIE_USERNAME, data.get(CONF_COOKIE_USERNAME, "")) or ""),
-                ): str,
-                vol.Required(
-                    CONF_COOKIE_PASSWORD,
-                    default=str(opts.get(CONF_COOKIE_PASSWORD, data.get(CONF_COOKIE_PASSWORD, "")) or ""),
-                ): str,
-                vol.Optional(
-                    CONF_LOCATION_ENTITY,
-                    default=str(opts.get(CONF_LOCATION_ENTITY, data.get(CONF_LOCATION_ENTITY, "")) or ""),
-                ): str,
-            }
+        return self.async_show_form(
+            step_id="init",
+            data_schema=_user_schema(defaults),
+            errors=errors,
         )
-        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
