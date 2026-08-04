@@ -12,6 +12,16 @@ ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "custom_components" / "seoul_bike"
 
 
+def _install_aiohttp_stub() -> None:
+    aiohttp = types.ModuleType("aiohttp")
+
+    class _ClientSession:
+        pass
+
+    aiohttp.ClientSession = _ClientSession
+    sys.modules.setdefault("aiohttp", aiohttp)
+
+
 def _install_homeassistant_stubs() -> None:
     homeassistant = types.ModuleType("homeassistant")
     config_entries = types.ModuleType("homeassistant.config_entries")
@@ -69,6 +79,7 @@ def _load_module(name: str, path: Path):
 
 
 def _load_seoul_bike_modules():
+    _install_aiohttp_stub()
     _install_homeassistant_stubs()
 
     custom_components = types.ModuleType("custom_components")

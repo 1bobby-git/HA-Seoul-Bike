@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Ddareungi setup",
-        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations\n",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
@@ -26,7 +26,7 @@
     "step": {
       "init": {
         "title": "Ddareungi setup",
-        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations\n",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
