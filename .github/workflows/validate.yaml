@@ -1,10 +1,27 @@
 name: Validate
 on:
   push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
   pull_request:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Release tag to validate against manifest.version
+        required: true
+        type: string
   schedule:
     - cron: "0 0 * * *"
 jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+
   validate-hacs:
     runs-on: ubuntu-latest
     steps:
@@ -19,3 +36,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Hassfest validation
         uses: home-assistant/actions/hassfest@master
+
+  validate-release-alignment:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release alignment
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+        run: python scripts/check_release_alignment.py "$RELEASE_TAG"
