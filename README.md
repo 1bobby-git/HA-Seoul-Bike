@@ -1,3 +1,14 @@
+<!-- project-branding:start -->
+<p align="center">
+  <img src="https://raw.githubusercontent.com/1bobby-git/brands/master/custom_integrations/seoul_bike/logo.png" alt="서울자전거 따릉이 로고" width="240">
+</p>
+<p align="center">
+  <a href="https://github.com/1bobby-git/HA-Seoul-Bike/stargazers">
+    <img src="https://img.shields.io/github/stars/1bobby-git/HA-Seoul-Bike?style=flat-square&logo=github&label=Stars" alt="GitHub Stars">
+  </a>
+</p>
+<!-- project-branding:end -->
+
 # 서울자전거 따릉이 (Seoul Public Bike)
 
 
