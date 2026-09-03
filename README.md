@@ -1,6 +1,6 @@
 <!-- project-branding:start -->
 <p align="center">
-  <img src="https://raw.githubusercontent.com/1bobby-git/brands/master/custom_integrations/seoul_bike/logo.png" alt="서울자전거 따릉이 로고" width="240">
+  <img src="https://raw.githubusercontent.com/1bobby-git/brands/master/custom_integrations/seoul_bike/logo%402x.png" alt="서울자전거 따릉이 로고" width="420">
 </p>
 <p align="center">
   <a href="https://github.com/1bobby-git/HA-Seoul-Bike/stargazers">
