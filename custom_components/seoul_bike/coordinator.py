@@ -8,6 +8,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from heapq import nsmallest
 from datetime import date, timedelta, datetime
 from math import asin, cos, radians, sin, sqrt
 from typing import Any
@@ -773,13 +774,13 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
             )
 
-        candidates.sort(key=lambda x: (-int(x.get("bikes_total") or 0), float(x.get("distance_m") or 0.0)))
-
+        rank = lambda x: (-int(x.get("bikes_total") or 0), float(x.get("distance_m") or 0.0))
         self.nearby_total_bikes = total
         if max_results > 0:
-            self.nearby = candidates[:max_results]
+            # Equivalent stable top-k ordering without sorting every candidate.
+            self.nearby = nsmallest(max_results, candidates, key=rank)
         else:
-            self.nearby = candidates
+            self.nearby = sorted(candidates, key=rank)
         self.nearby_recommended_bikes = sum(int(x.get("bikes_total") or 0) for x in self.nearby)
 
     def _compute_nearby_from_statuses(self, statuses: list[dict[str, Any]]) -> None:
@@ -820,13 +821,13 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 }
             )
 
-        candidates.sort(key=lambda x: (-int(x.get("bikes_total") or 0), float(x.get("distance_m") or 0.0)))
-
+        rank = lambda x: (-int(x.get("bikes_total") or 0), float(x.get("distance_m") or 0.0))
         self.nearby_total_bikes = total
         if max_results > 0:
-            self.nearby = candidates[:max_results]
+            # Equivalent stable top-k ordering without sorting every candidate.
+            self.nearby = nsmallest(max_results, candidates, key=rank)
         else:
-            self.nearby = candidates
+            self.nearby = sorted(candidates, key=rank)
         self.nearby_recommended_bikes = sum(int(x.get("bikes_total") or 0) for x in self.nearby)
 
     async def _ensure_login(self) -> tuple[bool | None, dict[str, Any]]:
@@ -846,9 +847,15 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if login_ok is False and username and password:
             try:
                 new_cookie = await self._api.login(username, password)
+                updated_options = dict(self.entry.options)
+                if CONF_COOKIE in updated_options:
+                    # Options take precedence in _ensure_login: do not restore
+                    # an obsolete cookie on the next polling cycle.
+                    updated_options[CONF_COOKIE] = new_cookie
                 self.hass.config_entries.async_update_entry(
                     self.entry,
                     data={**self.entry.data, CONF_COOKIE: new_cookie},
+                    options=updated_options,
                 )
                 self._api.set_cookie(new_cookie)
                 rent_status = await self._api.fetch_rent_status()
