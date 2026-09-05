@@ -1,0 +1,75 @@
+name: Deploy optimization 20260906
+on:
+  push:
+    branches: [release/optimization-20260906]
+    paths: [.github/workflows/deploy-optimization-20260906.yml]
+permissions:
+  contents: write
+concurrency:
+  group: deploy-optimization-20260906
+  cancel-in-progress: false
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PATCH_SPEC: >-
+        {"repository":"1bobby-git/HA-Seoul-Bike","branch":"main","base_version":"1.3.1","candidate_version":"1.3.2","summary":["자동 재로그인 뒤 options의 이전 쿠키가 새 data 쿠키를 덮는 우선순위 문제 수정","인근 대여소 상위 N개 선택에서 전체 정렬을 부분 선택으로 교체","기존 자전거 수 우선·거리순·동률 입력순 및 총합·설정·폴링 주기는 유지"],"changes":[{"path":"custom_components/seoul_bike/coordinator.py","git_blob_sha1":"db45241fddfc4619c955604f66c9291f839b14b3","old":"from dataclasses import dataclass\n","new":"from dataclasses import dataclass\nfrom heapq import nsmallest\n"},{"path":"custom_components/seoul_bike/coordinator.py","git_blob_sha1":"db45241fddfc4619c955604f66c9291f839b14b3","old":"        candidates.sort(key=lambda x: (-int(x.get(\"bikes_total\") or 0), float(x.get(\"distance_m\") or 0.0)))\n\n        self.nearby_total_bikes = total\n        if max_results > 0:\n            self.nearby = candidates[:max_results]\n        else:\n            self.nearby = candidates\n","new":"        rank = lambda x: (-int(x.get(\"bikes_total\") or 0), float(x.get(\"distance_m\") or 0.0))\n        self.nearby_total_bikes = total\n        if max_results > 0:\n            # Equivalent stable top-k ordering without sorting every candidate.\n            self.nearby = nsmallest(max_results, candidates, key=rank)\n        else:\n            self.nearby = sorted(candidates, key=rank)\n","count":2},{"path":"custom_components/seoul_bike/coordinator.py","git_blob_sha1":"db45241fddfc4619c955604f66c9291f839b14b3","old":"                new_cookie = await self._api.login(username, password)\n                self.hass.config_entries.async_update_entry(\n                    self.entry,\n                    data={**self.entry.data, CONF_COOKIE: new_cookie},\n                )\n","new":"                new_cookie = await self._api.login(username, password)\n                updated_options = dict(self.entry.options)\n                if CONF_COOKIE in updated_options:\n                    # Options take precedence in _ensure_login: do not restore\n                    # an obsolete cookie on the next polling cycle.\n                    updated_options[CONF_COOKIE] = new_cookie\n                self.hass.config_entries.async_update_entry(\n                    self.entry,\n                    data={**self.entry.data, CONF_COOKIE: new_cookie},\n                    options=updated_options,\n                )\n"},{"path":"custom_components/seoul_bike/manifest.json","git_blob_sha1":"d543fbcb644b332583353e6f06bcf94ef30afbd8","old":"\"version\": \"1.3.1\"","new":"\"version\": \"1.3.2\""}]}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          repository: 1bobby-git/HA-iOS-ANCS
+          ref: d5c58703029ea8cfbff4cfd335c59fc49d3fbe98
+          path: .release-helper
+          sparse-checkout: .optimization-release
+          persist-credentials: false
+      - name: Keep helpers outside release source
+        run: |
+          cp .release-helper/.optimization-release/deploy.py "$RUNNER_TEMP/optimization-deploy.py"
+          cp .release-helper/.optimization-release/unittest_report.py "$RUNNER_TEMP/optimization-unittest.py"
+          rm -rf .release-helper
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check source hashes, version and branch protections
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python "$RUNNER_TEMP/optimization-deploy.py" check
+      - name: Test unchanged baseline
+        run: |
+          python -m compileall -q custom_components/seoul_bike
+          python -m unittest discover -s tests -p 'test_*.py'
+          PYTHONPATH="$PWD" python "$RUNNER_TEMP/optimization-unittest.py" tests "$RUNNER_TEMP/optimization-baseline.xml"
+          python scripts/check_release_alignment.py v1.3.1
+      - name: Apply exact source patches and update documentation
+        run: python "$RUNNER_TEMP/optimization-deploy.py" apply
+      - name: Test complete patched integration and release alignment
+        run: |
+          python -m compileall -q custom_components/seoul_bike
+          python -m unittest discover -s tests -p 'test_*.py'
+          PYTHONPATH="$PWD" python "$RUNNER_TEMP/optimization-unittest.py" tests "$RUNNER_TEMP/optimization-patched.xml"
+          python scripts/check_release_alignment.py v1.3.2
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+      - name: Publish verified commit, tag and release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python "$RUNNER_TEMP/optimization-deploy.py" publish
+      - name: Preserve validation evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimization-validation
+          path: |
+            ${{ runner.temp }}/optimization-baseline.xml
+            ${{ runner.temp }}/optimization-patched.xml
+            ${{ runner.temp }}/optimization-result.json
+          if-no-files-found: ignore
