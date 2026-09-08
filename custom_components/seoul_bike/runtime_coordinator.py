@@ -29,8 +29,19 @@ class SeoulPublicBikeCoordinator(BaseCoordinator):
         login_ok, rent_status = await super()._ensure_login()
         return login_ok, normalize_rent_status(rent_status)
 
+    async def async_refresh_web(self) -> None:
+        """Refresh all website tiers immediately, including the favorite list."""
+        self._force_web_refresh = True
+        await self.async_refresh()
+
     async def _async_update_data(self) -> dict[str, Any]:
-        data = await super()._async_update_data()
+        # Serialize periodic refresh with the existing per-page refresh methods.
+        async with self._refresh_lock:
+            if getattr(self, "_force_web_refresh", False):
+                self._force_web_refresh = False
+                self._last_tier2_update = float("-inf")
+                self._last_tier3_update = float("-inf")
+            data = await super()._async_update_data()
         if not isinstance(data, dict):
             return data
         normalized = dict(data)
