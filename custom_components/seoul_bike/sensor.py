@@ -271,13 +271,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 uid = f"{entry.entry_id}_{period_key}_{suffix}"
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
         for suffix in ("http_status", "last_error"):
             for period in ("use_history_week", "use_history_month"):
                 uid = f"{entry.entry_id}_{period}_{suffix}"
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
 
     await _cleanup_legacy_use_history_sensors()
 
@@ -346,6 +346,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         ]
 
     async def _async_sync_favorites() -> None:
+        if not coordinator.last_update_success or (coordinator.data or {}).get("error"):
+            return
         prev: set[str] = set(getattr(coordinator, "_spb_fav_station_ids", set()))
         curr: set[str] = _current_station_ids()
         distance_enabled = _distance_enabled(hass, coordinator)
@@ -379,14 +381,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             for uid in (_uid_normal(sid), _uid_sprout(sid), _uid_station_id(sid), _uid_fav_distance(sid)):
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
 
         if prev_distance_enabled and not distance_enabled:
             for sid in sorted(curr):
                 uid = _uid_fav_distance(sid)
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
 
         coordinator._spb_fav_station_ids = curr  # type: ignore[attr-defined]
         coordinator._spb_fav_distance_enabled = distance_enabled  # type: ignore[attr-defined]
@@ -440,7 +442,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 uid = _uid_station_distance(sid)
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
 
         if removed:
             dev_reg = dr.async_get(hass)
@@ -455,7 +457,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 ):
                     entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                     if entity_id:
-                        await ent_reg.async_remove(entity_id)
+                        ent_reg.async_remove(entity_id)
 
                 device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_station_{sid}")})
                 if device:
@@ -465,7 +467,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             for uid in _nearby_uids():
                 entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
 
             dev_reg = dr.async_get(hass)
             device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_stations")})
@@ -484,7 +486,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         hass.async_create_task(_sync_all())
 
-    coordinator.async_add_listener(_on_coordinator_update)
+    entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
 
 
 class _BaseUseHistorySensor(CoordinatorEntity[SeoulPublicBikeCoordinator], SensorEntity):

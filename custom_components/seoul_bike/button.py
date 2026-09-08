@@ -100,7 +100,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             uid = f"{entry.entry_id}_{suffix}_refresh"
             entity_id = ent_reg.async_get_entity_id("button", DOMAIN, uid)
             if entity_id:
-                await ent_reg.async_remove(entity_id)
+                ent_reg.async_remove(entity_id)
 
     await _cleanup_legacy_use_history_buttons()
 
@@ -138,6 +138,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         return f"{entry.entry_id}_station_refresh_all"
 
     async def _async_sync_favorites() -> None:
+        if not coordinator.last_update_success or (coordinator.data or {}).get("error"):
+            return
         prev: set[str] = set(getattr(coordinator, "_spb_fav_station_ids_btn", set()))
         curr: set[str] = _current_station_ids()
 
@@ -157,7 +159,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             uid = _uid_refresh(sid)
             entity_id = ent_reg.async_get_entity_id("button", DOMAIN, uid)
             if entity_id:
-                await ent_reg.async_remove(entity_id)
+                ent_reg.async_remove(entity_id)
 
         coordinator._spb_fav_station_ids_btn = curr  # type: ignore[attr-defined]
 
@@ -185,12 +187,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 uid = _uid_station_refresh(sid)
                 entity_id = ent_reg.async_get_entity_id("button", DOMAIN, uid)
                 if entity_id:
-                    await ent_reg.async_remove(entity_id)
+                    ent_reg.async_remove(entity_id)
 
         if prev and not curr:
             entity_id = ent_reg.async_get_entity_id("button", DOMAIN, _uid_station_refresh_all())
             if entity_id:
-                await ent_reg.async_remove(entity_id)
+                ent_reg.async_remove(entity_id)
 
         coordinator._spb_station_ids_btn = curr  # type: ignore[attr-defined]
 
@@ -202,7 +204,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         hass.async_create_task(_sync_all())
 
-    coordinator.async_add_listener(_on_coordinator_update)
+    entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))
 
 
 class UseHistoryRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):
@@ -251,7 +253,7 @@ class MyPageRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonE
         }
 
     async def async_press(self) -> None:
-        await self.coordinator.async_refresh_my_page()
+        await self.coordinator.async_refresh_web()
 
 
 class FavoriteStationRefreshButton(CoordinatorEntity[SeoulPublicBikeCoordinator], ButtonEntity):

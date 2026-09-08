@@ -6,6 +6,10 @@ site_api.py. Keep this module as the stable import path used by the integration.
 
 from __future__ import annotations
 
+from time import time_ns
+
+from .const import API_PATH_FAVORITES
+
 from .site_api import (
     SeoulPublicBikeSiteApi as _SiteApi,
     _normalize_cookie,
@@ -25,7 +29,17 @@ class SeoulPublicBikeSiteApi(_SiteApi):
         # This legacy server may close idle keep-alive connections between polls.
         # Do not retain this response's socket, or alter HA's shared connector.
         headers["Connection"] = "close"
+        headers["Cache-Control"] = "no-cache, no-store, max-age=0"
+        headers["Pragma"] = "no-cache"
         return headers
+
+    async def fetch_favorites_html(self) -> str:
+        """Read a fresh account snapshot, not a cached favorite page."""
+        return await self._get_text(
+            API_PATH_FAVORITES,
+            params={"_": str(time_ns())},
+            referer_path=API_PATH_FAVORITES,
+        )
 
     _get_text = site_request("GET")(_SiteApi._get_text)
     _get_json = site_request("GET")(_SiteApi._get_json)

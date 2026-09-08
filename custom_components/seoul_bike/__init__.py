@@ -21,6 +21,7 @@ from .const import (
     MODEL_USE_HISTORY,
 )
 from .runtime_coordinator import SeoulPublicBikeCoordinator
+from .favorites import sync_favorite_registry
 
 _LOGGER = logging.getLogger(__name__)
 _RELOAD_FINGERPRINT_ATTR = "_seoul_bike_reload_fingerprint"
@@ -101,9 +102,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return
         if validation_status == "ok":
             reauth_started = False
+            if coordinator.last_update_success:
+                sync_favorite_registry(hass, entry, current_data)
 
     entry.async_on_unload(coordinator.async_add_listener(_handle_auth_state))
 
+    # A reload resets the in-memory previous list, not the persistent registries.
+    sync_favorite_registry(hass, entry, data)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _cleanup_legacy_use_history_devices(hass, entry)
     _update_device_registry(hass, entry)

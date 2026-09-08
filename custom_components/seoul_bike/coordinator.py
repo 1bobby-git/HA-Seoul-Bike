@@ -22,6 +22,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from homeassistant.util import dt as dt_util
 
 from .api import SeoulPublicBikeSiteApi
+from .favorites import validate_favorites_html
 from .const import (
     CONF_COOKIE,
     CONF_COOKIE_PASSWORD,
@@ -1316,7 +1317,10 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                             pdata["move_route"] = {"error": str(err)}
 
                 fav_html = await self._api.fetch_favorites_html()
-                favorites = [] if _looks_like_login(fav_html) else _extract_favorites_with_counts(fav_html)
+                if _looks_like_login(fav_html):
+                    raise ValueError("즐겨찾기 페이지 인증 실패: 기존 즐겨찾기를 유지합니다.")
+                favorites = _extract_favorites_with_counts(fav_html)
+                validate_favorites_html(fav_html, favorites)
 
                 self._last_tier2_update = now
 
