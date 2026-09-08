@@ -10,7 +10,7 @@ import time
 from dataclasses import dataclass
 from heapq import nsmallest
 from datetime import date, timedelta, datetime
-from math import asin, cos, radians, sin, sqrt
+from math import asin, cos, isfinite, radians, sin, sqrt
 from typing import Any
 from html import unescape
 from html.parser import HTMLParser
@@ -83,13 +83,21 @@ def _strip_tags(s: str) -> str:
     return unescape(s).replace("\xa0", " ").strip()
 
 
-def _to_float(text: str) -> float | None:
-    m = re.search(r"[-+]?\d+(?:\.\d+)?", text or "")
-    if not m:
+def _to_float(text: str | int | float | None) -> float | None:
+    """Read API numbers as well as formatted values from HTML pages."""
+    if isinstance(text, (int, float)):
+        value = text
+    elif isinstance(text, str):
+        match = re.search(r"[-+]?\d+(?:\.\d+)?", text)
+        if not match:
+            return None
+        value = match.group(0)
+    else:
         return None
     try:
-        return float(m.group(0))
-    except Exception:
+        parsed = float(value)
+        return parsed if isfinite(parsed) else None
+    except (ValueError, OverflowError):
         return None
 
 

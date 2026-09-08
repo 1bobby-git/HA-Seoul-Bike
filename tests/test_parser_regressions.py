@@ -99,6 +99,21 @@ api, coordinator = _load_seoul_bike_modules()
 
 
 class ParserRegressionTests(unittest.TestCase):
+    def test_station_coordinates_accept_json_numbers(self) -> None:
+        instance = object.__new__(coordinator.SeoulPublicBikeCoordinator)
+        station = instance._station_from_status(
+            {"stationId": "ST-1", "stationLatitude": 37.5, "stationLongitude": 127.0},
+            None, None, None,
+        )
+        self.assertEqual((37.5, 127.0), (station.lat, station.lon))
+
+    def test_numeric_parser_preserves_text_units_and_rejects_nonfinite_values(self) -> None:
+        self.assertEqual(2.7, coordinator._to_float("2.7 km"))
+        self.assertEqual(0.0, coordinator._to_float(0))
+        for value in (None, float("nan"), float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                self.assertIsNone(coordinator._to_float(value))
+
     def test_favorites_counts_preserve_station_identity_and_counts(self) -> None:
         html = """
         <ul id="favoriteList">
