@@ -64,6 +64,20 @@ class RetryPolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await self.invoke([error, "ok"]), "ok")
                 self.assertEqual(self.operation.await_count, 2)
 
+    async def test_connection_errors_are_transient_regardless_of_errno(self):
+        # ECONNRESET is 104 on Linux but 10054 on Windows; the platform errno
+        # must not decide whether a dropped connection is retried.
+        for error in (
+            ConnectionResetError(10054, "reset"),
+            ConnectionAbortedError(53, "aborted"),
+            BrokenPipeError(232, "broken pipe"),
+            ConnectionRefusedError(1225, "refused"),
+        ):
+            with self.subTest(error=type(error).__name__):
+                self.assertTrue(transport._is_transient(error))
+                self.assertEqual(await self.invoke([error, "ok"]), "ok")
+                self.assertEqual(self.operation.await_count, 2)
+
     async def test_exhaustion_raises_original_exception(self):
         error = ConnectionResetError(104, "reset")
         with self.assertRaises(ConnectionResetError) as raised:

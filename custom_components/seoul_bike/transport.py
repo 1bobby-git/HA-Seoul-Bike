@@ -41,6 +41,10 @@ def _is_transient(error: Exception) -> bool:
         return error.status in _RETRYABLE_STATUSES
     if isinstance(error, (TimeoutError, aiohttp.ClientConnectionError, aiohttp.ClientPayloadError)):
         return True
+    # A dropped connection is transient regardless of the platform errno value
+    # (for example ECONNRESET is 104 on Linux but 10054 on Windows).
+    if isinstance(error, ConnectionError):
+        return True
     return isinstance(error, OSError) and error.errno in _RETRYABLE_ERRNOS
 
 

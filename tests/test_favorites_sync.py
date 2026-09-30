@@ -214,7 +214,7 @@ class CoordinatorRefreshTests(unittest.IsolatedAsyncioTestCase):
 class PlatformContractTests(unittest.TestCase):
     def test_registry_callbacks_are_not_awaited_and_listeners_are_unloaded(self):
         for filename in ('sensor.py', 'button.py'):
-            text = (ROOT / 'custom_components/seoul_bike' / filename).read_text()
+            text = (ROOT / 'custom_components/seoul_bike' / filename).read_text(encoding='utf-8')
             tree = ast.parse(text)
             for node in ast.walk(tree):
                 if isinstance(node, ast.Await) and isinstance(node.value, ast.Call):
@@ -224,7 +224,7 @@ class PlatformContractTests(unittest.TestCase):
             self.assertIn('entry.async_on_unload(coordinator.async_add_listener(_on_coordinator_update))', text)
 
     def test_reload_reconciles_before_entity_platforms_are_created(self):
-        text = (ROOT / 'custom_components/seoul_bike/__init__.py').read_text()
+        text = (ROOT / 'custom_components/seoul_bike/__init__.py').read_text(encoding='utf-8')
         self.assertLess(text.index('sync_favorite_registry(hass, entry, data)'),
                         text.index('await hass.config_entries.async_forward_entry_setups'))
 
