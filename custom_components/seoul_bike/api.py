@@ -28,10 +28,12 @@ __all__ = ["SeoulPublicBikeSiteApi", "_normalize_cookie", "_strip_tags"]
 class SeoulPublicBikeSiteApi(_SiteApi):
     """Preserve site behavior while recovering from transient connection loss."""
 
-    # Final address of the last request that got a response. site_api's error
-    # path overwrites last_meta with the requested URL, which hides a redirect
-    # to the sign-in page.
-    last_response_url: str | None = None
+    # site_api's error path overwrites last_meta with the requested URL, which
+    # hides a redirect to the sign-in page, so these flags follow the final
+    # address of each response instead.
+    _tracking_rent_status = False
+    _rent_status_saw_login_page = False
+    _login_post_landed_on_login_page = False
 
     def _record_meta(
         self,
@@ -41,25 +43,41 @@ class SeoulPublicBikeSiteApi(_SiteApi):
         error: str | None = None,
     ) -> None:
         super()._record_meta(method, url, status, error)
-        if status is not None:
-            self.last_response_url = url
+        if status is None:
+            return
+        on_login_page = urlsplit(str(url)).path.endswith(API_PATH_LOGIN)
+        if method == "POST":
+            self._login_post_landed_on_login_page = on_login_page
+        elif self._tracking_rent_status and on_login_page:
+            self._rent_status_saw_login_page = True
 
     def rent_status_redirected_to_login(self) -> bool:
-        """Return true when the last rent status request ended on /login.do."""
-        return urlsplit(str(self.last_response_url or "")).path.endswith(API_PATH_LOGIN)
+        """Return true when the last rent status check reached /login.do.
+
+        Either rent status path counts, whatever the other path answered.
+        """
+        return self._rent_status_saw_login_page
 
     async def fetch_rent_status(self) -> dict[str, Any]:
-        self.last_response_url = None
-        return await super().fetch_rent_status()
+        self._rent_status_saw_login_page = False
+        self._tracking_rent_status = True
+        try:
+            return await super().fetch_rent_status()
+        finally:
+            self._tracking_rent_status = False
 
     async def login(self, username: str, password: str) -> str:
+        self._login_post_landed_on_login_page = False
+        self._rent_status_saw_login_page = False
         try:
             return await super().login(username, password)
-        except ValueError as err:
-            # The check after the login POST lands on the sign-in page when the
-            # site rejected the password. Report a rejection, never a temporary
-            # error that would send the same password again on every poll.
-            if str(err) == "non_json_response" and self.rent_status_redirected_to_login():
+        except Exception as err:
+            # The site sent the login form back and the check after it lands on
+            # the sign-in page: the password was rejected. Report a rejection,
+            # never a temporary error that would send the same password again
+            # on every poll. An accepted login whose check is redirected stays
+            # a temporary error.
+            if self._login_post_landed_on_login_page and self._rent_status_saw_login_page:
                 raise ValueError("login_failed") from err
             raise
 

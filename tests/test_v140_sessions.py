@@ -286,17 +286,48 @@ class NearbyTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(7, c.nearby_total_bikes)
         self.assertEqual(1, len(c.nearby))
+        self.assertTrue(c.nearby_ready)
+        self.assertEqual("station_list_unavailable", c.nearby_status)
         self.assertEqual("ok", c.data["validation_status"])
+
+    async def test_nearby_stays_unknown_until_a_station_list_arrives(self) -> None:
+        c = make_coordinator(data={"location_entity": "person.me"})
+        self._locate(c, latitude=37.5665, longitude=126.978)
+        c._api.fetch_station_realtime_all.side_effect = ConnectionResetError("reset")
+
+        await c.async_refresh()
+
+        self.assertFalse(c.nearby_ready)
+        self.assertEqual("station_list_unavailable", c.nearby_status)
+
+    async def test_legacy_entries_still_compute_nearby_from_their_stations(self) -> None:
+        c = make_coordinator(options={const.CONF_STATION_IDS: ["ST-1"]})
+        c._api.fetch_station_realtime_all.side_effect = ConnectionResetError("reset")
+
+        await c.async_refresh()
+
+        self.assertTrue(c.nearby_ready)
+        self.assertNotEqual("station_list_unavailable", c.nearby_status)
 
     async def test_location_state_in_lat_lon_form_is_the_center(self) -> None:
         c = make_coordinator(data={"location_entity": "person.me"})
         self._locate(c, state="37.5665,126.978")
+        c._api.fetch_station_realtime_all.return_value = [
+            {
+                "stationId": "ST-9",
+                "stationName": "102. City Hall",
+                "stationLatitude": "37.5666",
+                "stationLongitude": "126.978",
+                "parkingBikeTotCnt": "3",
+            }
+        ]
 
         await c.async_refresh()
 
         self.assertEqual("person.me", c.center_source)
         self.assertEqual((37.5665, 126.978), (c.center_lat, c.center_lon))
         self.assertEqual("ok", c.nearby_status)
+        self.assertEqual(3, c.nearby_total_bikes)
 
     def test_platforms_seed_station_tracking_at_setup(self) -> None:
         """Legacy station sensors and buttons are not re-added on the first poll."""
@@ -335,8 +366,15 @@ class LoginRedirectRealSocketTests(unittest.IsolatedAsyncioTestCase):
     and aiohttp code."""
 
     async def asyncSetUp(self) -> None:
+        # Switches for site variants: an accepted login whose check is still
+        # redirected, and an alternate rent status path that answers 404.
+        self.redirect_signed_in = False
+        self.alternate_status: int | None = None
+
         async def rent_status(request):
-            if request.cookies.get("JSESSIONID") == "signed-in":
+            if request.path == const.API_PATH_RENT_STATUS_ALT and self.alternate_status:
+                return web.Response(status=self.alternate_status, text="missing")
+            if request.cookies.get("JSESSIONID") == "signed-in" and not self.redirect_signed_in:
                 return web.json_response({"loginYn": "Y", "memberYn": "Y", "rentYn": "N"})
             raise web.HTTPFound("/login.do")
 
@@ -353,7 +391,7 @@ class LoginRedirectRealSocketTests(unittest.IsolatedAsyncioTestCase):
         async def login_post(request):
             form = await request.post()
             if form.get("j_password") == "right":
-                response = web.HTTPFound("/")
+                response = web.HTTPFound("/main.do")
                 response.set_cookie("JSESSIONID", "signed-in", path="/")
                 raise response
             raise web.HTTPFound("/login.do?error=1")
@@ -366,7 +404,7 @@ class LoginRedirectRealSocketTests(unittest.IsolatedAsyncioTestCase):
         app.router.add_get(const.API_PATH_RENT_STATUS_ALT, rent_status)
         app.router.add_get(const.API_PATH_LOGIN, login_page)
         app.router.add_post("/j_spring_security_check", login_post)
-        app.router.add_get("/", home)
+        app.router.add_get("/main.do", home)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         site = web.TCPSite(self.runner, "127.0.0.1", 0)
@@ -389,6 +427,22 @@ class LoginRedirectRealSocketTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("/login.do", str(self.client.last_meta["url"]))
 
     async def test_wrong_password_redirect_is_a_rejection(self) -> None:
+        with self.assertRaisesRegex(ValueError, "login_failed"):
+            await self.client.login("me", "wrong")
+
+    async def test_accepted_login_with_a_redirected_check_stays_temporary(self) -> None:
+        """A signed-in session that the check still redirects is not a wrong password."""
+        self.redirect_signed_in = True
+        with self.assertRaises(ValueError) as caught:
+            await self.client.login("me", "right")
+        self.assertEqual("non_json_response", str(caught.exception))
+
+    async def test_redirect_on_the_primary_path_counts_when_the_alternate_fails(self) -> None:
+        self.alternate_status = 404
+        with self.assertRaises(aiohttp.ClientResponseError):
+            await self.client.fetch_rent_status()
+        self.assertTrue(self.client.rent_status_redirected_to_login())
+
         with self.assertRaisesRegex(ValueError, "login_failed"):
             await self.client.login("me", "wrong")
 

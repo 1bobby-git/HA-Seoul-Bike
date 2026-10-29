@@ -160,11 +160,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         revision = int(
                             entry.data.get(CONF_COOKIE_REVISION, 0) or 0
                         ) + 1
-                        # The coordinator reads the location from options
-                        # first; keep an options value in step with this form.
+                        # The coordinator reads the location and a legacy
+                        # cookie from options first; keep them in step.
                         options = dict(entry.options)
                         if CONF_LOCATION_ENTITY in options:
                             options[CONF_LOCATION_ENTITY] = location_entity
+                        if CONF_COOKIE in options:
+                            options[CONF_COOKIE] = cookie_line
                         self.hass.config_entries.async_update_entry(
                             entry,
                             data={

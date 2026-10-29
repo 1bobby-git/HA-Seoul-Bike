@@ -994,7 +994,9 @@ class NearbyTotalBikesSensor(_StationControllerSensor):
         self._attr_name = "주변 대여 가능 자전거 (전체)"
 
     @property
-    def native_value(self) -> int:
+    def native_value(self) -> int | None:
+        if not getattr(self.coordinator, "nearby_ready", True):
+            return None
         return int(getattr(self.coordinator, "nearby_total_bikes", 0) or 0)
 
     @property
@@ -1018,7 +1020,9 @@ class NearbyRecommendedBikesSensor(_StationControllerSensor):
         self._attr_name = "주변 추천 대여소 대여 가능 자전거"
 
     @property
-    def native_value(self) -> int:
+    def native_value(self) -> int | None:
+        if not getattr(self.coordinator, "nearby_ready", True):
+            return None
         return int(getattr(self.coordinator, "nearby_recommended_bikes", 0) or 0)
 
     @property
@@ -1040,7 +1044,9 @@ class NearbyStationsListSensor(_StationControllerSensor):
         self._attr_name = "주변 대여소 목록"
 
     @property
-    def native_value(self) -> int:
+    def native_value(self) -> int | None:
+        if not getattr(self.coordinator, "nearby_ready", True):
+            return None
         return len(self.coordinator.nearby)
 
     @property

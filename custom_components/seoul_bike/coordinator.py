@@ -630,6 +630,9 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.nearby: list[dict[str, Any]] = []
         self.nearby_total_bikes: int = 0
         self.nearby_recommended_bikes: int = 0
+        # False until a nearby result exists; the nearby sensors stay unknown
+        # instead of reporting 0 bikes.
+        self.nearby_ready: bool = False
         self.station_ids: list[str] = []
         self.stations_by_id: dict[str, Station] = {}
 
@@ -1423,14 +1426,12 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # ═══════════════════════════════════════════
 
             realtime_list: list[dict[str, Any]] = []
-            realtime_failed = False
             if self.station_ids or favorites or self.location_entity_id:
                 try:
                     realtime_list = await self._api.fetch_station_realtime_all()
                 except Exception as err:
                     _LOGGER.debug("Station realtime list fetch failed: %s", err)
                     realtime_list = []
-                    realtime_failed = True
 
             realtime_by_id, realtime_by_no = _build_realtime_lookups(realtime_list)
 
@@ -1572,13 +1573,15 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if realtime_list:
                 self._compute_nearby_from_statuses(realtime_list)
-            elif realtime_failed and not self.station_ids:
-                # Without configured stations there is nothing to fall back
-                # on: keep the last nearby result instead of publishing zero
-                # bikes as valid data for one failed station list.
-                pass
+                self.nearby_ready = True
+            elif self.location_entity_id and not self.station_ids:
+                # A location-only entry has no stations to fall back on: keep
+                # the last nearby result instead of publishing zero bikes as
+                # valid data, and say why in the 상태 attribute.
+                self.nearby_status = "station_list_unavailable"
             else:
                 self._compute_nearby()
+                self.nearby_ready = True
 
             self._sync_last_request_meta()
             return {
