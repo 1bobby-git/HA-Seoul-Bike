@@ -44,16 +44,19 @@ Tier 2 로그인 페이지 분기도 Tier 1 분기처럼 이전 `periods`·`tick
 
 ### 3.4 그 밖의 수정
 - F5: `/myLeftPage.do` 호출을 `async_refresh_my_page`와 같이 보호합니다.
-- F7: 필드가 없는 것과 0을 구분하고, 새싹 수를 전기자전거 수로 대체하지 않습니다. 실시간 값에 새싹 필드가 없으면 즐겨찾기 HTML 값을 유지합니다. 표시 값이 바뀔 수 있어 CHANGELOG에 적습니다.
+- F7: 보류(3.6절).
 - F8: 재인증·옵션의 비밀번호 칸은 비워 두면 저장된 값을 유지하고 기본값을 보내지 않습니다. 위치는 `suggested_value`로 바꿔 지울 수 있게 합니다. `reauth_successful`·`reauth_failed` 문구를 추가합니다. 로드되지 않은 항목만 직접 다시 불러옵니다.
 - F9: `await`를 지우고 AST 검사를 `binary_sensor.py`·`__init__.py`까지 넓힙니다.
 - F10: `_unrecorded_attributes = frozenset({"경로 좌표"})`.
 - F11: `api.py`에서 `filter_cookies(URL(BASE))`로 덮어씁니다(`site_api.py` 무변경).
 - F12: 재로그인 쿠키 저장을 `_ensure_login`과 같이 옵션 쿠키까지 갱신합니다.
 
-### 3.5 주변 추천 (F13): 결정 필요
-- A안(추천): 위치 엔티티가 설정된 항목에 기존 주변 추천 센서 3개(`{entry_id}_nearby_total_bikes`, `_nearby_recommended_bikes`, `_nearby_station_list`)를 만듭니다. 대여소별 센서·버튼은 지금처럼 레거시 `station_ids` 항목에만 있습니다. 새 엔티티가 생기므로 버전은 1.4.0입니다.
-- B안: 동작은 그대로 두고 README를 "레거시 항목 전용"으로 고칩니다. 버전은 1.3.7입니다.
+### 3.5 주변 추천 (F13): A안으로 결정 (2026-10-29)
+- A안(채택): 위치 엔티티가 설정된 항목에 기존 주변 추천 센서 3개(`{entry_id}_nearby_total_bikes`, `_nearby_recommended_bikes`, `_nearby_station_list`)를 만듭니다. 대여소별 센서·버튼은 지금처럼 레거시 `station_ids` 항목에만 있습니다. 새 엔티티가 생기므로 버전은 1.4.0입니다. 위치 엔티티를 지우면 센서와 `{entry_id}_stations` 기기를 정리합니다.
+- B안(미채택): 동작은 그대로 두고 README를 "레거시 항목 전용"으로 고칩니다.
+
+### 3.6 보류 (F7)
+`parkingELECBikeCnt`가 전기자전거 수인지 새싹 수인지 코드로 확인할 수 없습니다(원 작성자 주석은 "새싹(전기)"). 실제 응답 확인 전까지 자전거 수 계산은 바꾸지 않습니다.
 
 ## 4. 바꾸지 않는 것
 엔티티·unique_id·엔티티 ID, 폴링 주기와 Tier 간격, 설정 입력 항목, 즐겨찾기 실패 시 `UpdateFailed`, 효과가 있는 요청이 없는 점(로그인 POST와 조회 POST만), `site_api.py`, 재시도 정책(`transport.py`).
