@@ -14,7 +14,6 @@ from math import asin, cos, isfinite, radians, sin, sqrt
 from typing import Any
 from html import unescape
 from html.parser import HTMLParser
-from urllib.parse import urlsplit
 
 import aiohttp
 from homeassistant.config_entries import ConfigEntry
@@ -26,7 +25,6 @@ from homeassistant.util import dt as dt_util
 from .api import SeoulPublicBikeSiteApi
 from .favorites import validate_favorites_html
 from .const import (
-    API_PATH_LOGIN,
     CONF_COOKIE,
     CONF_COOKIE_PASSWORD,
     CONF_COOKIE_UPDATE_INTERVAL,
@@ -671,8 +669,8 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def _rent_status_redirected_to_login(self) -> bool:
         """대여 상태 요청이 로그인 페이지로 리디렉트되었는지(JSON 대신 HTML)."""
-        meta = getattr(self._api, "last_meta", None) or {}
-        return urlsplit(str(meta.get("url") or "")).path.endswith(API_PATH_LOGIN)
+        check = getattr(self._api, "rent_status_redirected_to_login", None)
+        return bool(check()) if callable(check) else False
 
     def _store_cookie(self, new_cookie: str) -> None:
         updated_options = dict(self.entry.options)
@@ -764,6 +762,14 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         lat = st.attributes.get("latitude")
         lon = st.attributes.get("longitude")
+        if lat is None or lon is None:
+            # Same "lat,lon" state format the distance sensors accept.
+            m = re.search(
+                r"^\s*(-?\d+(?:\.\d+)?)\s*[,/ ]\s*(-?\d+(?:\.\d+)?)\s*$",
+                str(st.state),
+            )
+            if m:
+                lat, lon = m.group(1), m.group(2)
         if lat is None or lon is None:
             self.nearby_status = "location_no_coords"
             return
@@ -1051,6 +1057,12 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             updated_at = datetime.now().isoformat()
             html = await self._api.fetch_use_history_html()
             self._sync_last_request_meta()
+            if not str(html or "").strip():
+                # Same rule as the periodic update: an empty page is a failed
+                # read, not a sign-out.
+                self.validation_status = "error"
+                self.last_error = "empty_use_history"
+                return
             if _looks_like_login(html):
                 self.validation_status = "login_page"
                 self.last_error = "login_page"
@@ -1411,12 +1423,14 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # ═══════════════════════════════════════════
 
             realtime_list: list[dict[str, Any]] = []
+            realtime_failed = False
             if self.station_ids or favorites or self.location_entity_id:
                 try:
                     realtime_list = await self._api.fetch_station_realtime_all()
                 except Exception as err:
                     _LOGGER.debug("Station realtime list fetch failed: %s", err)
                     realtime_list = []
+                    realtime_failed = True
 
             realtime_by_id, realtime_by_no = _build_realtime_lookups(realtime_list)
 
@@ -1558,6 +1572,11 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if realtime_list:
                 self._compute_nearby_from_statuses(realtime_list)
+            elif realtime_failed and not self.station_ids:
+                # Without configured stations there is nothing to fall back
+                # on: keep the last nearby result instead of publishing zero
+                # bikes as valid data for one failed station list.
+                pass
             else:
                 self._compute_nearby()
 

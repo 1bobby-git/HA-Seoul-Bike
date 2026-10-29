@@ -70,11 +70,23 @@ def station_display_name(station: object | None, fallback: str) -> str:
     return title or station_no or fallback
 
 
-def entered_or_stored_password(entered: object, stored: object) -> str:
+def entered_or_stored_password(
+    entered: object,
+    stored: object,
+    *,
+    username: object = None,
+    stored_username: object = None,
+) -> str:
     """Keep the stored password when reauth or options leave the field blank.
 
     The forms never send the stored password to the browser, so a blank field
-    means "unchanged".
+    means "unchanged". The stored password belongs to the stored username: it
+    is reused only while the username stays the same, never for another
+    account.
     """
     value = str(entered or "").strip()
-    return value or str(stored or "").strip()
+    if value:
+        return value
+    if str(username or "").strip() != str(stored_username or "").strip():
+        return ""
+    return str(stored or "").strip()

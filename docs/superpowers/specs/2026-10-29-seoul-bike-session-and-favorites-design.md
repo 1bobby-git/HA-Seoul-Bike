@@ -18,7 +18,7 @@
 | F2 | 여러 계정이 Home Assistant 공용 세션(`async_get_clientsession`)의 쿠키 jar를 같이 씁니다. aiohttp는 jar 쿠키로 같은 이름의 Cookie 헤더 값을 덮어쓰므로, 한 계정이 다시 로그인하면 다른 계정 요청에 그 계정의 `JSESSIONID`가 실립니다. 다른 계정의 대여 상태·이용내역·즐겨찾기가 보이고 즐겨찾기 엔티티가 바뀝니다(서버 데이터는 바뀌지 않음). | `coordinator.py` 605, `site_api.py` 90, 101-112, aiohttp `ClientRequest.update_cookies` |
 | F3 | 거부된 비밀번호로 60초마다 다시 로그인합니다(재인증을 기다리는 동안에도). 계정 잠금 위험이 있습니다. | `coordinator.py` 1188-1199 |
 | F4 | 재로그인 중 연결 오류·시간 초과도 비밀번호 거부와 같이 처리합니다. 시작 시 한 번의 연결 오류로 `ConfigEntryAuthFailed`가 나서 사용자가 재인증할 때까지 통합이 로드되지 않습니다. | `coordinator.py` 1198, `__init__.py` 80-85, `transport.py` 84-88(로그인 POST 1회) |
-| F5 | `_async_update_data`에서 `/myLeftPage.do` 호출을 보호하지 않습니다. 이용권 만료일이 없는 사용자에게 이 페이지가 계속 실패하면 매 주기가 실패하고, 시작 시에는 `ConfigEntryNotReady`가 반복됩니다. 버튼 경로(`async_refresh_my_page`)는 보호합니다. | `coordinator.py` 1378-1388 vs 926-932 |
+| F5 | `_async_update_data`에서 `/myLeftPage.do` 호출을 보호하지 않습니다. 이용권 만료일이 없는 사용자에게 이 페이지가 계속 실패하면 매 주기가 실패하고, 시작 시에는 `ConfigEntryNotReady`가 반복됩니다. 마이페이지 새로 고침 버튼도 같은 경로(`async_refresh_web`)를 씁니다. 보호된 `async_refresh_my_page`는 호출하는 곳이 없습니다. | `coordinator.py` 1378-1388, `button.py` 256 |
 | F6 | 이용내역 응답이 빈 본문이면 로그인 페이지로 판단해 재인증을 요청합니다. 대여 상태 API가 `/login.do`로 리디렉트되어 HTML을 주면 `login_ok`가 None이 되어 자동 재로그인을 하지 않습니다. | `coordinator.py` 256-257, 1274, 1180-1186, `site_api.py` 146-155 |
 | F7 | 실시간 대여소 값에서 새싹 수가 0이면 전기자전거 수(`parkingELECBikeCnt`)로 대체하고, 일반 수가 없으면 전체 수로 대체합니다. 즐겨찾기의 HTML 값(일반/새싹)을 실시간 값으로 덮어써 새싹 수가 틀립니다. | `coordinator.py` 683-747, 1031-1046, 1407-1424 |
 | F8 | 재인증·옵션 화면이 저장된 비밀번호를 기본값으로 브라우저에 보냅니다. 위치 엔티티를 지울 수 없습니다(기본값이 다시 들어감). `reauth_successful` 문구가 없습니다. 로드된 항목을 재인증하면 두 번 다시 불러옵니다. | `config_flow.py` 72-84, 146, 168, 207-210, `strings.json` 21-23 |
@@ -43,7 +43,7 @@ Tier 2 로그인 페이지 분기도 Tier 1 분기처럼 이전 `periods`·`tick
 - 이용내역 본문이 비어 있으면 로그인 페이지가 아닌 일시 오류로 처리합니다. `_looks_like_login`은 바꾸지 않습니다.
 
 ### 3.4 그 밖의 수정
-- F5: `/myLeftPage.do` 호출을 `async_refresh_my_page`와 같이 보호합니다.
+- F5: `/myLeftPage.do` 호출 실패를 잡아 이전 만료일을 유지합니다.
 - F7: 보류(3.6절).
 - F8: 재인증·옵션의 비밀번호 칸은 비워 두면 저장된 값을 유지하고 기본값을 보내지 않습니다. 위치는 `suggested_value`로 바꿔 지울 수 있게 합니다. `reauth_successful`·`reauth_failed` 문구를 추가합니다. 로드되지 않은 항목만 직접 다시 불러옵니다.
 - F9: `await`를 지우고 AST 검사를 `binary_sensor.py`·`__init__.py`까지 넓힙니다.
@@ -71,3 +71,16 @@ Tier 2 로그인 페이지 분기도 Tier 1 분기처럼 이전 `periods`·`tick
 
 ## 6. 배포
 `fix/1.3.7-session-and-favorites`에서 작업해 CI(단위 테스트·HACS·hassfest)를 확인하고 `main`에 병합·push합니다. `publish-release`가 `docs/releases/vX.md`로 Release와 zip을 만듭니다. 실제 계정·운영 HA 확인은 하지 않습니다.
+
+## 7. 리뷰 반영 (2026-10-29)
+
+`semantic_reviewer` 결과(NEEDS_CHANGES)를 반영했습니다.
+
+- 리디렉트 감지: `site_api._get_json`의 오류 처리가 `last_meta`를 요청한 주소로 덮어써 `/login.do` 리디렉트가 보이지 않았습니다. `api.py`가 응답을 받은 마지막 주소(`last_response_url`)를 따로 기록하고, `fetch_rent_status` 시작 때 초기화합니다. 로그인 직후 확인 요청이 `/login.do`로 돌아오면 `login()`이 `login_failed`를 내서 같은 패스워드를 매 주기 다시 보내지 않습니다. 로컬 서버로 실제 aiohttp·transport·site_api 경로를 검증합니다.
+- 주변 추천 값 유지: 대여소 실시간 목록 요청이 실패하면, 대여소 목록이 없는 항목은 이전 주변 추천 값을 유지합니다(0대로 바꾸지 않음).
+- 위치 좌표: `_compute_center`가 거리 센서처럼 `위도,경도` 형식 상태도 읽습니다. 위치를 찾지 못하면 기존처럼 HA 집 위치를 쓰고 `상태` 속성으로 알립니다.
+- 설정 화면: 빈 패스워드는 아이디가 같을 때만 저장된 값을 씁니다. 재인증에서 바꾼 위치를 옵션의 위치에도 반영하고, 재인증 화면은 옵션의 위치를 보여 줍니다.
+- 이용 내역 새로 고침 버튼도 빈 응답을 로그아웃으로 보지 않습니다.
+- 레거시 대여소 버튼도 설정 시 추적 목록을 채워 첫 갱신에서 다시 등록하지 않습니다.
+- 문서: 새로 고침 버튼에 대한 잘못된 문장을 지우고, 1.3.6으로 되돌릴 때 남는 주변 추천 센서를 안내합니다.
+- 테스트: 새 테스트 모듈을 단독 실행해도 실제 aiohttp를 쓰도록 했습니다.

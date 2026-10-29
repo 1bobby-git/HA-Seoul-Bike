@@ -5,6 +5,7 @@ Fixtures are synthetic; no test contacts a real Seoul Bike account.
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib
 import json
 import time
@@ -12,6 +13,11 @@ import types
 import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
+
+# Import the real aiohttp first so the shared stubs never replace it; the
+# real-socket tests below need it.
+import aiohttp
+from aiohttp import web
 
 from test_parser_regressions import api, coordinator
 
@@ -127,16 +133,27 @@ class ReloginTests(unittest.IsolatedAsyncioTestCase):
             nonlocal calls
             calls += 1
             if calls == 1:
-                c._api.last_meta = {"url": "https://www.bikeseoul.com/login.do", "status": 200}
                 raise ValueError("non_json_response")
             return dict(OK_STATUS)
 
         c._api.fetch_rent_status = AsyncMock(side_effect=rent_status)
+        c._api.rent_status_redirected_to_login = Mock(return_value=True)
 
         await c.async_refresh()
 
         c._api.login.assert_awaited_once()
         self.assertEqual("ok", c.data["validation_status"])
+
+    async def test_non_json_rent_status_without_redirect_stays_temporary(self) -> None:
+        c = make_coordinator()
+        await c.async_refresh()
+        c._api.fetch_rent_status = AsyncMock(side_effect=ValueError("non_json_response"))
+        c._api.rent_status_redirected_to_login = Mock(return_value=False)
+
+        await c.async_refresh()
+
+        c._api.login.assert_not_awaited()
+        self.assertNotEqual("login_page", c.data["validation_status"])
 
     async def test_button_relogin_errors_are_temporary(self) -> None:
         c = make_coordinator(rent={"loginYn": "N"})
@@ -170,6 +187,19 @@ class TemporaryPageTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual("error", c.validation_status)
 
+    async def test_empty_use_history_from_the_button_is_not_a_sign_out(self) -> None:
+        c = make_coordinator()
+        await c.async_refresh()
+        before = c.data
+        c._api.fetch_use_history_html.return_value = ""
+        c.async_set_updated_data = Mock()
+
+        await c.async_refresh_use_history("history")
+
+        self.assertEqual("error", c.validation_status)
+        c.async_set_updated_data.assert_not_called()
+        self.assertIs(before, c.data)
+
     async def test_left_page_failure_keeps_the_previous_ticket_expiry(self) -> None:
         c = make_coordinator()
         c._api.fetch_voucher_info.return_value = {}
@@ -202,7 +232,7 @@ class SessionTests(unittest.IsolatedAsyncioTestCase):
         jar_a = factory.call_args_list[0].kwargs["cookie_jar"]
         jar_b = factory.call_args_list[1].kwargs["cookie_jar"]
         self.assertIsNot(jar_a, jar_b)
-        self.assertEqual("CookieJar", type(jar_a).__name__)
+        self.assertIsInstance(jar_a, coordinator.aiohttp.CookieJar)
         self.assertIs(jar_a, first._api._session.cookie_jar)
         self.assertIs(jar_b, second._api._session.cookie_jar)
 
@@ -228,6 +258,65 @@ class NearbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(plain.nearby_enabled)
         self.assertTrue(legacy.nearby_enabled)
 
+    @staticmethod
+    def _locate(instance, state: str = "home", **attributes) -> None:
+        located = types.SimpleNamespace(state=state, attributes=attributes)
+        instance.hass.states = types.SimpleNamespace(
+            get=lambda entity_id: located if entity_id == "person.me" else None
+        )
+
+    async def test_failed_station_list_keeps_the_previous_nearby_result(self) -> None:
+        c = make_coordinator(data={"location_entity": "person.me"})
+        self._locate(c, latitude=37.5665, longitude=126.978)
+        c._api.fetch_station_realtime_all.return_value = [
+            {
+                "stationId": "ST-9",
+                "stationName": "102. City Hall",
+                "stationLatitude": "37.5666",
+                "stationLongitude": "126.978",
+                "parkingBikeTotCnt": "7",
+            }
+        ]
+        await c.async_refresh()
+        self.assertEqual(7, c.nearby_total_bikes)
+        self.assertEqual(1, len(c.nearby))
+
+        c._api.fetch_station_realtime_all.side_effect = ConnectionResetError("reset")
+        await c.async_refresh()
+
+        self.assertEqual(7, c.nearby_total_bikes)
+        self.assertEqual(1, len(c.nearby))
+        self.assertEqual("ok", c.data["validation_status"])
+
+    async def test_location_state_in_lat_lon_form_is_the_center(self) -> None:
+        c = make_coordinator(data={"location_entity": "person.me"})
+        self._locate(c, state="37.5665,126.978")
+
+        await c.async_refresh()
+
+        self.assertEqual("person.me", c.center_source)
+        self.assertEqual((37.5665, 126.978), (c.center_lat, c.center_lon))
+        self.assertEqual("ok", c.nearby_status)
+
+    def test_platforms_seed_station_tracking_at_setup(self) -> None:
+        """Legacy station sensors and buttons are not re-added on the first poll."""
+        for filename, attribute in (
+            ("sensor.py", "_spb_station_ids"),
+            ("button.py", "_spb_station_ids_btn"),
+        ):
+            tree = ast.parse((PACKAGE / filename).read_text(encoding="utf-8"))
+            setup = next(
+                node for node in tree.body
+                if isinstance(node, ast.AsyncFunctionDef) and node.name == "async_setup_entry"
+            )
+            seeded = [
+                node for node in setup.body
+                if isinstance(node, ast.Assign)
+                and any(getattr(t, "attr", "") == attribute for t in node.targets)
+            ]
+            with self.subTest(filename=filename):
+                self.assertTrue(seeded)
+
     def test_sensor_platform_creates_and_removes_nearby_sensors_by_nearby_enabled(self) -> None:
         tree = ast.parse((PACKAGE / "sensor.py").read_text(encoding="utf-8"))
         functions = {
@@ -238,6 +327,88 @@ class NearbyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nearby_enabled", functions["async_setup_entry"])
         self.assertIn("nearby_enabled", functions["_async_sync_stations"])
         self.assertNotIn("if not prev and curr", functions["_async_sync_stations"])
+
+
+class LoginRedirectRealSocketTests(unittest.IsolatedAsyncioTestCase):
+    """A local site that answers like a Spring login: JSON when signed in, a
+    redirect to /login.do otherwise. Exercises the real site_api, transport
+    and aiohttp code."""
+
+    async def asyncSetUp(self) -> None:
+        async def rent_status(request):
+            if request.cookies.get("JSESSIONID") == "signed-in":
+                return web.json_response({"loginYn": "Y", "memberYn": "Y", "rentYn": "N"})
+            raise web.HTTPFound("/login.do")
+
+        async def login_page(_request):
+            return web.Response(
+                text=(
+                    '<form action="/j_spring_security_check" method="post">'
+                    '<input type="text" name="j_username">'
+                    '<input type="password" name="j_password"></form>'
+                ),
+                content_type="text/html",
+            )
+
+        async def login_post(request):
+            form = await request.post()
+            if form.get("j_password") == "right":
+                response = web.HTTPFound("/")
+                response.set_cookie("JSESSIONID", "signed-in", path="/")
+                raise response
+            raise web.HTTPFound("/login.do?error=1")
+
+        async def home(_request):
+            return web.Response(text="<html>home</html>", content_type="text/html")
+
+        app = web.Application()
+        app.router.add_get(const.API_PATH_RENT_STATUS, rent_status)
+        app.router.add_get(const.API_PATH_RENT_STATUS_ALT, rent_status)
+        app.router.add_get(const.API_PATH_LOGIN, login_page)
+        app.router.add_post("/j_spring_security_check", login_post)
+        app.router.add_get("/", home)
+        self.runner = web.AppRunner(app)
+        await self.runner.setup()
+        site = web.TCPSite(self.runner, "127.0.0.1", 0)
+        await site.start()
+        port = site._server.sockets[0].getsockname()[1]
+        # IP addresses need an unsafe jar; production talks to www.bikeseoul.com.
+        self.session = aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar(unsafe=True))
+        self.client = api.SeoulPublicBikeSiteApi(self.session, "")
+        self.client.BASE = f"http://127.0.0.1:{port}"
+
+    async def asyncTearDown(self) -> None:
+        await self.session.close()
+        await self.runner.cleanup()
+
+    async def test_redirect_to_login_is_detected_after_rent_status_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non_json_response"):
+            await self.client.fetch_rent_status()
+        self.assertTrue(self.client.rent_status_redirected_to_login())
+        # site_api's error path still reports the requested address.
+        self.assertNotIn("/login.do", str(self.client.last_meta["url"]))
+
+    async def test_wrong_password_redirect_is_a_rejection(self) -> None:
+        with self.assertRaisesRegex(ValueError, "login_failed"):
+            await self.client.login("me", "wrong")
+
+    async def test_right_password_logs_in_and_json_is_not_a_redirect(self) -> None:
+        cookie = await self.client.login("me", "right")
+        self.assertIn("JSESSIONID=signed-in", cookie)
+
+        status = await self.client.fetch_rent_status()
+
+        self.assertEqual("Y", status["loginYn"])
+        self.assertFalse(self.client.rent_status_redirected_to_login())
+
+    async def test_unreachable_site_is_not_a_redirect(self) -> None:
+        await self.runner.cleanup()
+        transport = importlib.import_module("custom_components.seoul_bike.transport")
+        with patch.object(transport, "RETRY_DELAYS", (0.0, 0.0)):
+            with self.assertRaises(Exception) as caught:
+                await self.client.fetch_rent_status()
+        self.assertNotIsInstance(caught.exception, ValueError)
+        self.assertFalse(self.client.rent_status_redirected_to_login())
 
 
 class PlatformContractTests(unittest.TestCase):
@@ -300,11 +471,31 @@ class ConfigFlowContractTests(unittest.TestCase):
         self.assertIn("suggested_value", self.source)
 
     def test_blank_password_keeps_the_stored_password(self) -> None:
-        self.assertEqual("stored", const.entered_or_stored_password("", "stored"))
-        self.assertEqual("stored", const.entered_or_stored_password("  ", "stored"))
-        self.assertEqual("new", const.entered_or_stored_password(" new ", "stored"))
-        self.assertEqual("", const.entered_or_stored_password(None, None))
+        keep = const.entered_or_stored_password
+        self.assertEqual("stored", keep("", "stored", username="me", stored_username="me"))
+        self.assertEqual("stored", keep("  ", "stored", username=" me ", stored_username="me"))
+        self.assertEqual("new", keep(" new ", "stored", username="me", stored_username="me"))
+        self.assertEqual("new", keep("new", "stored", username="other", stored_username="me"))
+        # Never send one account's password for another username.
+        self.assertEqual("", keep("", "stored", username="other", stored_username="me"))
+        self.assertEqual("", keep(None, None))
         self.assertIn("entered_or_stored_password", self.source)
+        self.assertIn("stored_username=", self.source)
+
+    def test_reauth_keeps_an_options_location_in_step(self) -> None:
+        tree = ast.parse(self.source)
+        flow = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, ast.ClassDef) and node.name == "ConfigFlow"
+        )
+        updates = [
+            node for node in ast.walk(flow)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "async_update_entry"
+        ]
+        self.assertTrue(updates)
+        self.assertTrue(all("options" in {k.arg for k in call.keywords} for call in updates))
 
     def test_reauth_reloads_only_an_entry_that_is_not_loaded(self) -> None:
         self.assertIn("ConfigEntryState.LOADED", self.source)

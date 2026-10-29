@@ -137,6 +137,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     def _uid_station_refresh_all() -> str:
         return f"{entry.entry_id}_station_refresh_all"
 
+    # Station buttons created above are already managed; the first update must
+    # not add them again under the same unique IDs.
+    coordinator._spb_station_ids_btn = _current_station_ids_from_status()  # type: ignore[attr-defined]
+
     async def _async_sync_favorites() -> None:
         if not coordinator.last_update_success or (coordinator.data or {}).get("error"):
             return

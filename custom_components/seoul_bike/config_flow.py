@@ -124,10 +124,13 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 reauth_entry = self.hass.config_entries.async_get_entry(
                     self._reauth_entry_id
                 )
-                password = entered_or_stored_password(
-                    password,
-                    reauth_entry.data.get(CONF_COOKIE_PASSWORD) if reauth_entry else "",
-                )
+                if reauth_entry is not None:
+                    password = entered_or_stored_password(
+                        password,
+                        reauth_entry.data.get(CONF_COOKIE_PASSWORD),
+                        username=username,
+                        stored_username=reauth_entry.data.get(CONF_COOKIE_USERNAME),
+                    )
             location_entity = str(
                 user_input.get(CONF_LOCATION_ENTITY) or ""
             ).strip()
@@ -157,6 +160,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                         revision = int(
                             entry.data.get(CONF_COOKIE_REVISION, 0) or 0
                         ) + 1
+                        # The coordinator reads the location from options
+                        # first; keep an options value in step with this form.
+                        options = dict(entry.options)
+                        if CONF_LOCATION_ENTITY in options:
+                            options[CONF_LOCATION_ENTITY] = location_entity
                         self.hass.config_entries.async_update_entry(
                             entry,
                             data={
@@ -167,6 +175,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                                 CONF_COOKIE_REVISION: revision,
                                 CONF_LOCATION_ENTITY: location_entity,
                             },
+                            options=options,
                             title=username,
                         )
                         # A loaded entry reloads through its update listener,
@@ -196,6 +205,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             if entry:
                 defaults = dict(entry.data)
+                # Show the location the coordinator actually uses.
+                if CONF_LOCATION_ENTITY in entry.options:
+                    defaults[CONF_LOCATION_ENTITY] = entry.options[CONF_LOCATION_ENTITY]
 
         return self.async_show_form(
             step_id="user",
@@ -252,6 +264,8 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
             password = entered_or_stored_password(
                 user_input.get(CONF_COOKIE_PASSWORD),
                 defaults.get(CONF_COOKIE_PASSWORD),
+                username=username,
+                stored_username=defaults.get(CONF_COOKIE_USERNAME),
             )
             location_entity = str(
                 user_input.get(CONF_LOCATION_ENTITY) or ""
