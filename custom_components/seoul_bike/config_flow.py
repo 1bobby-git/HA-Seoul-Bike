@@ -7,7 +7,7 @@ from typing import Any
 import aiohttp
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.config_entries import ConfigFlowResult
+from homeassistant.config_entries import ConfigEntryState, ConfigFlowResult
 from homeassistant.helpers import selector
 
 from .api import SeoulPublicBikeSiteApi
@@ -18,6 +18,7 @@ from .const import (
     CONF_COOKIE_USERNAME,
     CONF_LOCATION_ENTITY,
     DOMAIN,
+    entered_or_stored_password,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -49,13 +50,29 @@ def _login_error_key(error: Exception) -> str:
     return "cannot_connect"
 
 
-def _user_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
+def _user_schema(
+    defaults: dict[str, Any] | None = None,
+    *,
+    password_optional: bool = False,
+) -> vol.Schema:
+    """Build the account form.
+
+    The stored password is never sent to the browser as a default. Reauth and
+    options mark it optional: a blank field keeps the stored password. The
+    location is a suggestion rather than a default so the user can clear it.
+    """
     defaults = defaults or {}
     location = str(defaults.get(CONF_LOCATION_ENTITY) or "").strip()
     location_field = selector.EntitySelector(
         selector.EntitySelectorConfig(
             domain=["device_tracker", "person", "zone", "sensor"],
             multiple=False,
+        )
+    )
+    password_field = selector.TextSelector(
+        selector.TextSelectorConfig(
+            type=selector.TextSelectorType.PASSWORD,
+            autocomplete="current-password",
         )
     )
     return vol.Schema(
@@ -69,17 +86,18 @@ def _user_schema(defaults: dict[str, Any] | None = None) -> vol.Schema:
                     autocomplete="username",
                 )
             ),
-            vol.Required(
-                CONF_COOKIE_PASSWORD,
-                default=str(defaults.get(CONF_COOKIE_PASSWORD, "") or ""),
-            ): selector.TextSelector(
-                selector.TextSelectorConfig(
-                    type=selector.TextSelectorType.PASSWORD,
-                    autocomplete="current-password",
-                )
+            **(
+                {vol.Optional(CONF_COOKIE_PASSWORD): password_field}
+                if password_optional
+                else {vol.Required(CONF_COOKIE_PASSWORD): password_field}
             ),
             **(
-                {vol.Optional(CONF_LOCATION_ENTITY, default=location): location_field}
+                {
+                    vol.Optional(
+                        CONF_LOCATION_ENTITY,
+                        description={"suggested_value": location},
+                    ): location_field
+                }
                 if location
                 else {vol.Optional(CONF_LOCATION_ENTITY): location_field}
             ),
@@ -102,6 +120,14 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             username = str(user_input.get(CONF_COOKIE_USERNAME) or "").strip()
             password = str(user_input.get(CONF_COOKIE_PASSWORD) or "").strip()
+            if self._reauth_entry_id is not None and not password:
+                reauth_entry = self.hass.config_entries.async_get_entry(
+                    self._reauth_entry_id
+                )
+                password = entered_or_stored_password(
+                    password,
+                    reauth_entry.data.get(CONF_COOKIE_PASSWORD) if reauth_entry else "",
+                )
             location_entity = str(
                 user_input.get(CONF_LOCATION_ENTITY) or ""
             ).strip()
@@ -143,7 +169,11 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                             },
                             title=username,
                         )
-                        await self.hass.config_entries.async_reload(entry.entry_id)
+                        # A loaded entry reloads through its update listener,
+                        # because the revision changed; reload here only when
+                        # the entry is not loaded (setup failed or retrying).
+                        if entry.state is not ConfigEntryState.LOADED:
+                            await self.hass.config_entries.async_reload(entry.entry_id)
                         return self.async_abort(reason="reauth_successful")
 
                     await self.async_set_unique_id(_login_unique_id(username))
@@ -169,7 +199,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="user",
-            data_schema=_user_schema(defaults),
+            data_schema=_user_schema(
+                defaults,
+                password_optional=self._reauth_entry_id is not None,
+            ),
             errors=errors,
         )
 
@@ -216,7 +249,10 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         if user_input is not None:
             username = str(user_input.get(CONF_COOKIE_USERNAME) or "").strip()
-            password = str(user_input.get(CONF_COOKIE_PASSWORD) or "").strip()
+            password = entered_or_stored_password(
+                user_input.get(CONF_COOKIE_PASSWORD),
+                defaults.get(CONF_COOKIE_PASSWORD),
+            )
             location_entity = str(
                 user_input.get(CONF_LOCATION_ENTITY) or ""
             ).strip()
@@ -259,6 +295,6 @@ class OptionsFlowHandler(config_entries.OptionsFlow):
 
         return self.async_show_form(
             step_id="init",
-            data_schema=_user_schema(defaults),
+            data_schema=_user_schema(defaults, password_optional=True),
             errors=errors,
         )

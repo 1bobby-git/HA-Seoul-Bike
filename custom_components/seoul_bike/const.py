@@ -68,3 +68,13 @@ def station_display_name(station: object | None, fallback: str) -> str:
     if station_no and title:
         return f"{station_no}. {title}"
     return title or station_no or fallback
+
+
+def entered_or_stored_password(entered: object, stored: object) -> str:
+    """Keep the stored password when reauth or options leave the field blank.
+
+    The forms never send the stored password to the browser, so a blank field
+    means "unchanged".
+    """
+    value = str(entered or "").strip()
+    return value or str(stored or "").strip()

@@ -114,7 +114,7 @@ async def async_setup_entry(
                 if device and (DOMAIN, device_id) not in (
                     device.identifiers or set()
                 ):
-                    await entity_registry.async_remove(existing_id)
+                    entity_registry.async_remove(existing_id)
 
     _ensure_entity_id(
         hass,

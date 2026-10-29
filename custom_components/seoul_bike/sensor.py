@@ -223,7 +223,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     station_ids = list(getattr(coordinator, "stations_by_id", {}) or {})
     distance_enabled = _distance_enabled(hass, coordinator)
-    if station_ids:
+    # Nearby summary sensors exist for a location entity or legacy station IDs.
+    nearby_enabled = bool(getattr(coordinator, "nearby_enabled", False))
+    if nearby_enabled:
         entities.extend(
             [
                 NearbyTotalBikesSensor(coordinator, entry),
@@ -232,6 +234,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             ]
         )
 
+    if station_ids:
         for sid in station_ids:
             st = coordinator.stations_by_id.get(sid)
             station_name = _station_display_name(st, sid)
@@ -345,6 +348,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             f"{entry.entry_id}_nearby_station_list",
         ]
 
+    def _remove_nearby_entities() -> None:
+        for uid in _nearby_uids():
+            entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
+            if entity_id:
+                ent_reg.async_remove(entity_id)
+        dev_reg = dr.async_get(hass)
+        device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_stations")})
+        if device:
+            dev_reg.async_remove_device(device.id)
+
+    if not nearby_enabled:
+        # The location entity was cleared or never set: drop nearby sensors a
+        # previous configuration left in the registry.
+        _remove_nearby_entities()
+    coordinator._spb_nearby_enabled = nearby_enabled  # type: ignore[attr-defined]
+    # Station sensors created above are already managed; the first update must
+    # not add them again under the same unique IDs.
+    coordinator._spb_station_ids = _current_station_ids_from_status()  # type: ignore[attr-defined]
+
     async def _async_sync_favorites() -> None:
         if not coordinator.last_update_success or (coordinator.data or {}).get("error"):
             return
@@ -401,9 +423,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         added = curr - prev
         removed = prev - curr
+        nearby_now = bool(getattr(coordinator, "nearby_enabled", False))
+        nearby_before = getattr(coordinator, "_spb_nearby_enabled", nearby_now)
 
         new_entities: list[SensorEntity] = []
-        if not prev and curr:
+        if nearby_now and not nearby_before:
             new_entities.extend(
                 [
                     NearbyTotalBikesSensor(coordinator, entry),
@@ -463,19 +487,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 if device:
                     dev_reg.async_remove_device(device.id)
 
-        if prev and not curr:
-            for uid in _nearby_uids():
-                entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, uid)
-                if entity_id:
-                    ent_reg.async_remove(entity_id)
-
-            dev_reg = dr.async_get(hass)
-            device = dev_reg.async_get_device(identifiers={(DOMAIN, f"{entry.entry_id}_stations")})
-            if device:
-                dev_reg.async_remove_device(device.id)
+        if nearby_before and not nearby_now:
+            _remove_nearby_entities()
 
         coordinator._spb_station_ids = curr  # type: ignore[attr-defined]
         coordinator._spb_distance_enabled = distance_enabled  # type: ignore[attr-defined]
+        coordinator._spb_nearby_enabled = nearby_now  # type: ignore[attr-defined]
 
     @callback
     def _on_coordinator_update() -> None:
@@ -639,6 +656,8 @@ class LastFieldSensor(_BaseUseHistorySensor):
 class MoveRouteDistanceSensor(_BaseUseHistorySensor):
     _attr_native_unit_of_measurement = "m"
     _attr_icon = "mdi:map-marker-distance"
+    # The full route can be large; keep it out of the recorder database.
+    _unrecorded_attributes = frozenset({"경로 좌표"})
 
     def __init__(
         self,

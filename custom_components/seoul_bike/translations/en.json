@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Ddareungi setup",
-        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations\n- When re-authenticating, leave the password empty to keep the stored one.",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",
@@ -19,14 +19,16 @@
       "unknown": "Unknown error."
     },
     "abort": {
-      "already_configured": "Already configured."
+      "already_configured": "Already configured.",
+      "reauth_successful": "Re-authentication was successful.",
+      "reauth_failed": "The entry to re-authenticate was not found."
     }
   },
   "options": {
     "step": {
       "init": {
         "title": "Ddareungi setup",
-        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations",
+        "description": "Sign in with your Ddareungi account to use the unofficial API.\n\n- **Username/Password**: Used to log in\n- **My location entity (optional)**: Reference point for nearby recommendations\n- Leave the password empty to keep the stored one.",
         "data": {
           "cookie_username": "Username",
           "cookie_password": "Password",

@@ -18,7 +18,12 @@ def _install_aiohttp_stub() -> None:
     class _ClientSession:
         pass
 
+    class _CookieJar:
+        def __init__(self, *args, **kwargs):
+            pass
+
     aiohttp.ClientSession = _ClientSession
+    aiohttp.CookieJar = _CookieJar
     sys.modules.setdefault("aiohttp", aiohttp)
 
 
@@ -51,6 +56,7 @@ def _install_homeassistant_stubs() -> None:
     config_entries.ConfigEntry = _ConfigEntry
     core.HomeAssistant = _HomeAssistant
     aiohttp_client.async_get_clientsession = lambda hass: None
+    aiohttp_client.async_create_clientsession = lambda hass, **kwargs: None
     update_coordinator.DataUpdateCoordinator = _DataUpdateCoordinator
     update_coordinator.UpdateFailed = _UpdateFailed
     dt.DEFAULT_TIME_ZONE = timezone.utc

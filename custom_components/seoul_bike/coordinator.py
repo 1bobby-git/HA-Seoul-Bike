@@ -14,16 +14,19 @@ from math import asin, cos, isfinite, radians, sin, sqrt
 from typing import Any
 from html import unescape
 from html.parser import HTMLParser
+from urllib.parse import urlsplit
 
+import aiohttp
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .api import SeoulPublicBikeSiteApi
 from .favorites import validate_favorites_html
 from .const import (
+    API_PATH_LOGIN,
     CONF_COOKIE,
     CONF_COOKIE_PASSWORD,
     CONF_COOKIE_UPDATE_INTERVAL,
@@ -602,8 +605,18 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.entry = entry
 
         raw_cookie = entry.options.get(CONF_COOKIE) or entry.data.get(CONF_COOKIE) or ""
-        self._api = SeoulPublicBikeSiteApi(async_get_clientsession(hass), raw_cookie)
+        # Each account keeps its own cookie jar. Home Assistant's shared session
+        # jar would let one account's re-login cookie override another
+        # account's Cookie header. Created during entry setup, so Home
+        # Assistant detaches it when the entry unloads.
+        self._api = SeoulPublicBikeSiteApi(
+            async_create_clientsession(hass, cookie_jar=aiohttp.CookieJar()),
+            raw_cookie,
+        )
         self._refresh_lock = asyncio.Lock()
+        # Set once the site rejects the stored password; a reauth or options
+        # change reloads the entry with a new coordinator.
+        self._login_rejected = False
         self.last_error: str | None = None
         self.last_http_status: int | None = None
         self.last_request_url: str | None = None
@@ -650,6 +663,89 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.last_request_url = meta.get("url")
         if self._api.last_error and not self.last_error:
             self.last_error = self._api.last_error
+
+    @property
+    def nearby_enabled(self) -> bool:
+        """주변 추천 센서는 레거시 대여소 목록이나 위치 엔티티가 있을 때 만든다."""
+        return bool(self.station_ids) or bool((self.location_entity_id or "").strip())
+
+    def _rent_status_redirected_to_login(self) -> bool:
+        """대여 상태 요청이 로그인 페이지로 리디렉트되었는지(JSON 대신 HTML)."""
+        meta = getattr(self._api, "last_meta", None) or {}
+        return urlsplit(str(meta.get("url") or "")).path.endswith(API_PATH_LOGIN)
+
+    def _store_cookie(self, new_cookie: str) -> None:
+        updated_options = dict(self.entry.options)
+        if CONF_COOKIE in updated_options:
+            # Options take precedence when a cycle starts: do not restore an
+            # obsolete cookie on the next polling cycle or after a restart.
+            updated_options[CONF_COOKIE] = new_cookie
+        self.hass.config_entries.async_update_entry(
+            self.entry,
+            data={**self.entry.data, CONF_COOKIE: new_cookie},
+            options=updated_options,
+        )
+        self._api.set_cookie(new_cookie)
+
+    async def _async_relogin(self, username: str, password: str) -> dict[str, Any] | None:
+        """다시 로그인하고 새 대여 상태를 돌려준다. 비밀번호가 거부되면 None.
+
+        거부된 비밀번호로는 이 코디네이터에서 다시 로그인하지 않는다(계정 잠금
+        방지). 재인증·옵션 저장은 항목을 다시 불러와 새 코디네이터를 만든다.
+        연결 오류 같은 일시 오류는 그대로 올려 호출한 쪽이 인증 실패와 구분한다.
+        """
+        if self._login_rejected:
+            return None
+        try:
+            new_cookie = await self._api.login(username, password)
+        except ValueError as err:
+            if str(err) != "login_failed":
+                raise
+            self._login_rejected = True
+            _LOGGER.warning(
+                "따릉이 로그인이 거부되었습니다. 재인증 전까지 다시 로그인하지 않습니다."
+            )
+            return None
+        self._store_cookie(new_cookie)
+        return await self._api.fetch_rent_status()
+
+    def _preserved_result(
+        self,
+        prev_data: dict[str, Any],
+        rent_status: dict[str, Any],
+        error: str,
+        *,
+        updated_at: str | None = None,
+        user_status: dict[str, Any] | None = None,
+        reconsent_status: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """이전 값을 유지한 오류 결과. 빈 즐겨찾기로 엔티티가 지워지지 않게 한다."""
+        return {
+            "error": error,
+            "updated_at": updated_at or datetime.now().isoformat(),
+            "periods": prev_data.get("periods", {}),
+            "ticket_expiry": prev_data.get("ticket_expiry"),
+            "my_page": prev_data.get("my_page", {}),
+            "favorites": prev_data.get("favorites", []),
+            "favorite_status": prev_data.get("favorite_status", {}),
+            "rent_status": rent_status,
+            "user_status": (
+                prev_data.get("user_status", {}) if user_status is None else user_status
+            ),
+            "reconsent_status": (
+                prev_data.get("reconsent_status", {})
+                if reconsent_status is None
+                else reconsent_status
+            ),
+            "validation_status": self.validation_status,
+            "last_request": {
+                "url": self.last_request_url,
+                "http_status": self.last_http_status,
+                "error": self.last_error,
+            },
+            "nearby_count": len(self.nearby),
+            "station_count": len(self.stations_by_id),
+        }
 
     def _compute_center(self) -> None:
         self.center_source = "homeassistant_home"
@@ -852,27 +948,26 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             login_ok = _status_login_ok(rent_status)
         except Exception as err:
             rent_status = {"error": str(err)}
+            if self._rent_status_redirected_to_login():
+                login_ok = False
 
+        relogin_error: Exception | None = None
         if login_ok is False and username and password:
             try:
-                new_cookie = await self._api.login(username, password)
-                updated_options = dict(self.entry.options)
-                if CONF_COOKIE in updated_options:
-                    # Options take precedence in _ensure_login: do not restore
-                    # an obsolete cookie on the next polling cycle.
-                    updated_options[CONF_COOKIE] = new_cookie
-                self.hass.config_entries.async_update_entry(
-                    self.entry,
-                    data={**self.entry.data, CONF_COOKIE: new_cookie},
-                    options=updated_options,
-                )
-                self._api.set_cookie(new_cookie)
-                rent_status = await self._api.fetch_rent_status()
-                login_ok = _status_login_ok(rent_status)
-            except Exception as err:
-                _LOGGER.debug("Re-login failed: %s", err)
+                relogin_status = await self._async_relogin(username, password)
+            except Exception as err:  # noqa: BLE001
+                relogin_error = err
+            else:
+                if relogin_status is not None:
+                    rent_status = relogin_status
+                    login_ok = _status_login_ok(rent_status)
 
-        if login_ok is False:
+        if relogin_error is not None:
+            # A connection error during re-login is not a rejected password.
+            _LOGGER.debug("Re-login failed: %s", type(relogin_error).__name__)
+            self.validation_status = "error"
+            self.last_error = f"relogin_error: {type(relogin_error).__name__}"
+        elif login_ok is False:
             self.validation_status = "login_page"
             self.last_error = "login_page"
         elif login_ok is None:
@@ -1183,45 +1278,36 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 login_ok = _status_login_ok(rent_status)
             except Exception as err:
                 rent_status = {"error": str(err)}
-                login_ok = None
+                login_ok = False if self._rent_status_redirected_to_login() else None
 
             if login_ok is False and username and password:
                 try:
-                    new_cookie = await self._api.login(username, password)
-                    self.hass.config_entries.async_update_entry(
-                        self.entry,
-                        data={**self.entry.data, CONF_COOKIE: new_cookie},
-                    )
-                    self._api.set_cookie(new_cookie)
-                    rent_status = await self._api.fetch_rent_status()
-                    login_ok = _status_login_ok(rent_status)
+                    relogin_status = await self._async_relogin(username, password)
                 except Exception as err:
-                    _LOGGER.debug("Re-login failed: %s", err)
+                    # Connection errors and unexpected pages are temporary: keep
+                    # the previous values and never ask for new credentials.
+                    _LOGGER.debug("Re-login failed: %s", type(err).__name__)
+                    self.validation_status = "error"
+                    self.last_error = f"relogin_error: {type(err).__name__}"
+                    self._sync_last_request_meta()
+                    return self._preserved_result(
+                        prev_data,
+                        rent_status,
+                        "세션 갱신 실패(일시 오류, 다음 주기에 다시 시도)",
+                    )
+                if relogin_status is not None:
+                    rent_status = relogin_status
+                    login_ok = _status_login_ok(rent_status)
 
             if login_ok is False:
                 self.validation_status = "login_page"
                 self.last_error = "login_page"
                 self._sync_last_request_meta()
-                return {
-                    "error": "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
-                    "updated_at": datetime.now().isoformat(),
-                    "periods": prev_data.get("periods", {}),
-                    "ticket_expiry": prev_data.get("ticket_expiry"),
-                    "my_page": prev_data.get("my_page", {}),
-                    "favorites": prev_data.get("favorites", []),
-                    "favorite_status": prev_data.get("favorite_status", {}),
-                    "rent_status": rent_status,
-                    "user_status": prev_data.get("user_status", {}),
-                    "reconsent_status": prev_data.get("reconsent_status", {}),
-                    "validation_status": self.validation_status,
-                    "last_request": {
-                        "url": self.last_request_url,
-                        "http_status": self.last_http_status,
-                        "error": self.last_error,
-                    },
-                    "nearby_count": len(self.nearby),
-                    "station_count": len(self.stations_by_id),
-                }
+                return self._preserved_result(
+                    prev_data,
+                    rent_status,
+                    "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
+                )
 
             # 대여/반납 상태 변경 감지 → Tier 2 이벤트 트리거
             rent_key = self._make_rent_key(rent_status)
@@ -1269,30 +1355,26 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
             if need_tier2:
                 base_html = await self._api.fetch_use_history_html()
+                if not str(base_html or "").strip():
+                    # An empty page is a failed read, not a sign-out: do not ask
+                    # for new credentials, and keep the previous values.
+                    raise ValueError("이용내역 응답이 비어 있습니다(일시 오류)")
                 period_html: dict[str, str] = {"history": base_html}
 
                 if period_html and all(_looks_like_login(h) for h in period_html.values()):
                     self.validation_status = "login_page"
                     self.last_error = "login_page"
                     self._sync_last_request_meta()
-                    return {
-                        "error": "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
-                        "updated_at": updated_at,
-                        "periods": {},
-                        "ticket_expiry": None,
-                        "my_page": {},
-                        "favorites": [],
-                        "favorite_status": {},
-                        "rent_status": rent_status,
-                        "user_status": user_status,
-                        "reconsent_status": reconsent_status,
-                        "validation_status": self.validation_status,
-                        "last_request": {
-                            "url": self.last_request_url,
-                            "http_status": self.last_http_status,
-                            "error": self.last_error,
-                        },
-                    }
+                    # Keep the previous favorites: an empty list here would be
+                    # published as valid data by the next poll that skips Tier 2.
+                    return self._preserved_result(
+                        prev_data,
+                        rent_status,
+                        "로그인 페이지로 응답됨(쿠키 만료/권한/세션 제한 가능)",
+                        updated_at=updated_at,
+                        user_status=user_status,
+                        reconsent_status=reconsent_status,
+                    )
 
                 periods = {}
                 if "history" in period_html:
@@ -1375,9 +1457,16 @@ class SeoulPublicBikeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
                 ticket_expiry_iso = voucher_info.get("voucher_end_dttm")
                 if not ticket_expiry_iso:
-                    left_html = await self._api.fetch_left_page_html()
-                    ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
-                    ticket_expiry_iso = ticket_expiry.isoformat() if ticket_expiry else None
+                    try:
+                        left_html = await self._api.fetch_left_page_html()
+                    except Exception as err:
+                        # Same as the button refresh: one optional page must not
+                        # fail every poll. Keep the previous expiry.
+                        _LOGGER.debug("Left page fetch failed: %s", type(err).__name__)
+                        ticket_expiry_iso = prev_data.get("ticket_expiry")
+                    else:
+                        ticket_expiry = None if _looks_like_login(left_html) else _parse_ticket_expiry(left_html)
+                        ticket_expiry_iso = ticket_expiry.isoformat() if ticket_expiry else None
 
                 my_page = dict(voucher_info)
                 if "error" in voucher_payload:

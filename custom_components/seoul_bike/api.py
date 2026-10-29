@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from time import time_ns
 
+from yarl import URL
+
 from .const import API_PATH_FAVORITES
 
 from .site_api import (
@@ -40,6 +42,20 @@ class SeoulPublicBikeSiteApi(_SiteApi):
             params={"_": str(time_ns())},
             referer_path=API_PATH_FAVORITES,
         )
+
+    def _cookie_header_from_session(self) -> str:
+        """Read this session's cookies; aiohttp 4 accepts only yarl.URL here."""
+        try:
+            cookies = self._session.cookie_jar.filter_cookies(URL(self.BASE))
+        except Exception:
+            cookies = {}
+        parts: list[str] = []
+        for name, morsel in cookies.items():
+            value = getattr(morsel, "value", None)
+            if value is None:
+                continue
+            parts.append(f"{name}={value}")
+        return "; ".join(parts)
 
     _get_text = site_request("GET")(_SiteApi._get_text)
     _get_json = site_request("GET")(_SiteApi._get_json)
