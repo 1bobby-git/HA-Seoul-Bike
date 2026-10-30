@@ -1,21 +1,31 @@
 # Security Policy
 
-## Supported Versions
+## 지원 버전
 
-Use this section to tell people about which versions of your project are
-currently being supported with security updates.
+보안 수정은 최신 릴리스에만 제공합니다. HACS에서 최신 버전으로 업데이트한 뒤에도 문제가 계속되는지 확인해 주세요.
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 5.1.x   | :white_check_mark: |
-| 5.0.x   | :x:                |
-| 4.0.x   | :white_check_mark: |
-| < 4.0   | :x:                |
+| Version | Supported |
+| ------- | --------- |
+| 최신 릴리스 (1.4.x) | 지원 |
+| 그 이전 | 지원하지 않음 |
 
-## Reporting a Vulnerability
+## 취약점 보고
 
-Use this section to tell people how to report a vulnerability.
+이 저장소의 **Security** 탭에 **Report a vulnerability**(비공개 보고)가 보이면 그것을 사용해 주세요. 보이지 않으면 공개 이슈에는 재현 방법이나 공격 방법을 적지 말고, 영향받는 버전과 비공개 연락 요청만 남겨 주세요. 메인테이너가 비공개 보안 권고(GitHub draft security advisory)를 만들어 보고자를 초대하고, 세부 내용은 그 안에서 받습니다.
 
-Tell them where to go, how often they can expect to get an update on a
-reported vulnerability, what to expect if the vulnerability is accepted or
-declined, etc.
+보고에 넣어 주시면 좋은 내용:
+
+- 통합 버전과 Home Assistant 버전
+- 민감한 값을 지운 최소 재현 순서
+- 기대한 동작과 실제 동작
+
+보고에 넣지 말아야 하는 값:
+
+- 서울자전거 따릉이 아이디와 패스워드
+- `JSESSIONID` 같은 세션 쿠키, 브라우저에서 복사한 `Cookie:` 헤더
+- Home Assistant 토큰, `.storage` 파일, 백업 파일
+
+## 저장되는 정보
+
+- 아이디와 패스워드는 Home Assistant 설정 항목에 저장되며, 세션이 끝나면 같은 정보로 다시 로그인합니다. Home Assistant의 다른 통합처럼 `.storage` 폴더와 백업에 들어가므로 백업 파일을 공유하지 마세요.
+- 로그인 뒤 받은 세션 쿠키도 설정 항목에 저장됩니다. 계정(설정 항목)마다 따로 저장하며 다른 계정과 섞지 않습니다.
