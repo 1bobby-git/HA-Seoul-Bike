@@ -69,6 +69,34 @@ def validate_favorites_html(html: str, favorites: list[dict[str, Any]]) -> None:
         raise ValueError("즐겨찾기 목록 응답을 확인할 수 없습니다. 기존 즐겨찾기를 유지합니다.")
 
 
+_MISSING = object()
+
+
+def device_owner_ids(device: Any) -> set[str]:
+    """Return the config entries owning a device without the deprecated shim.
+
+    Home Assistant 2026.11 gives every stored device a single ``config_entry_id``;
+    reading the deprecated ``DeviceEntry.config_entries`` there runs
+    ``report_usage`` (a full stack and ``sys.modules`` scan) on every access.
+    Older cores only expose ``config_entries``.
+    """
+    entry_id = getattr(device, "config_entry_id", _MISSING)
+    if entry_id is _MISSING:
+        return set(getattr(device, "config_entries", ()) or ())
+    if getattr(device, "is_composite_device", False):
+        # Restored composites keep the multi-entry view and do not warn.
+        return set(getattr(device, "config_entries", ()) or ())
+    return {entry_id} if entry_id else set()
+
+
+def _owned_devices(dr: Any, registry: Any, entry_id: str) -> list[Any]:
+    """Devices of one config entry via the registry index, not a full scan."""
+    lookup = getattr(dr, "async_entries_for_config_entry", None)
+    if callable(lookup):
+        return list(lookup(registry, entry_id))
+    return [d for d in list(registry.devices.values()) if entry_id in device_owner_ids(d)]
+
+
 def sync_favorite_registry(hass: Any, entry: Any, data: dict[str, Any]) -> None:
     """Remove stale favorite entities/devices, never unrelated or shared items.
 
@@ -105,9 +133,7 @@ def sync_favorite_registry(hass: Any, entry: Any, data: dict[str, Any]) -> None:
     devices = dr.async_get(hass)
     device_prefix = f"{FAVORITE_DEVICE_PREFIX}_{entry.entry_id}_"
     current_devices = {f"{device_prefix}{sid}": name for sid, name in names.items()}
-    for device in list(devices.devices.values()):
-        if entry.entry_id not in device.config_entries:
-            continue
+    for device in _owned_devices(dr, devices, entry.entry_id):
         identifiers = {
             identifier for domain, identifier in device.identifiers
             if domain == DOMAIN and identifier.startswith(device_prefix)
@@ -123,7 +149,7 @@ def sync_favorite_registry(hass: Any, entry: Any, data: dict[str, Any]) -> None:
         # Do not remove a device shared with another entry or another entity.
         if any(domain != DOMAIN or not identifier.startswith(device_prefix) for domain, identifier in device.identifiers):
             continue
-        if set(device.config_entries) != {entry.entry_id}:
+        if device_owner_ids(device) != {entry.entry_id}:
             continue
         if any(entity.device_id == device.id for entity in entities.entities.values()):
             continue

@@ -142,6 +142,65 @@ class RegistryTests(unittest.TestCase):
         self.er.async_remove.assert_not_called()
 
 
+class _SingleOwnerDevice:
+    """HA 2026.11 DeviceEntry: one config_entry_id; the old shim is costly and deprecated."""
+
+    is_composite_device = False
+
+    def __init__(self, key, station, account):
+        self.id = key
+        self.name = 'old name'
+        self.identifiers = {('seoul_bike', f'favorite_station_account_{station}')}
+        self.config_entry_id = account
+
+    @property
+    def config_entries(self):
+        raise AssertionError('deprecated DeviceEntry.config_entries must not be read')
+
+
+class SingleOwnerRegistryTests(RegistryTests):
+    """Runs with the registry index lookup and single-owner devices of HA 2026.11+."""
+
+    def setUp(self):
+        super().setUp()
+        self.index_calls = []
+
+        def lookup(registry, entry_id):
+            self.index_calls.append(entry_id)
+            return [d for d in registry.devices.values() if d.config_entry_id == entry_id]
+
+        sys.modules['homeassistant.helpers.device_registry'].async_entries_for_config_entry = lookup
+
+    def device(self, key, station, accounts=('account',)):
+        # A 2026.11 device has one owner; the first account owns it.
+        self.dr.devices[key] = _SingleOwnerDevice(key, station, accounts[0])
+
+    def test_unrelated_station_other_account_and_shared_device_are_preserved(self):
+        self.entity('sensor.other', 'other_fav_101_normal', account='other', device_id='foreign')
+        self.dr.devices['foreign'] = _SingleOwnerDevice('foreign', '101', 'other')
+        self.sync([])
+        self.assertIn('foreign', self.dr.devices)
+        self.assertIn('sensor.other', self.er.entities)
+
+    def test_uses_registry_index_instead_of_scanning_all_devices(self):
+        for n in range(50):
+            self.dr.devices[f'other{n}'] = _SingleOwnerDevice(f'other{n}', str(n), f'other{n}')
+        self.device('old', '101')
+        self.sync([])
+        self.assertEqual(self.index_calls, ['account'])
+        self.assertNotIn('old', self.dr.devices)
+        self.assertEqual(len(self.dr.devices), 50)
+
+
+class DeviceOwnerTests(unittest.TestCase):
+    def test_legacy_multi_entry_device_uses_config_entries(self):
+        legacy = types.SimpleNamespace(config_entries={'a', 'b'})
+        self.assertEqual(favorites_module.device_owner_ids(legacy), {'a', 'b'})
+
+    def test_single_owner_device_never_touches_deprecated_shim(self):
+        self.assertEqual(favorites_module.device_owner_ids(_SingleOwnerDevice('d', '1', 'acc')), {'acc'})
+
+
 class CoordinatorRefreshTests(unittest.IsolatedAsyncioTestCase):
     def make_coordinator(self, html):
         hass = types.SimpleNamespace(
